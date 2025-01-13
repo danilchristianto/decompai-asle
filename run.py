@@ -1,4 +1,6 @@
-from src.main import demo
+import gradio as gr
+import src.main as main
 
-if __name__ == "__main__":
-    demo.launch()
+with gr.Blocks(css=main.CSS, title="Binary Analysis Agent") as demo:
+    main.demo_block()
+demo.launch()

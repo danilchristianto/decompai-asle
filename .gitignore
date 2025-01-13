@@ -166,3 +166,5 @@ latex-build/
 tmp/
 repomix-output.txt
 .DS_Store
+/binaries/
+/benchmarks/

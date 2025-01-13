@@ -4,8 +4,9 @@ from typing_extensions import Optional, Annotated
 from langchain_core.tools import tool
 from langgraph.prebuilt import InjectedState, InjectedStore
 
-from src.utils import WORKSPACE_DIR
+import src.config as config
 import src.utils as utils
+from src.utils import extract_function_asm
 from src.state import State
 
 @tool
@@ -82,13 +83,12 @@ def get_function_asm(binary_path: str, function_name: str) -> str:
     # In a real scenario, you'd rely on the previously saved disassembly file or cache.
     disasm_cmd = ["objdump", "-ds", binary_path]
     result = subprocess.run(disasm_cmd, capture_output=True, text=True, check=True)
-    asm_path = os.path.join(WORKSPACE_DIR, "temp_disassembly.asm")
+    asm_path = os.path.join(config.WORKSPACE_ROOT, "temp_disassembly.asm")
     with open(asm_path, "w") as f:
         f.write(result.stdout)
     
-    from utils import extract_function_asm
     try:
-        return extract_function_asm(asm_path, function_name)
+        return extract_function_asm(result.stdout, function_name)
     except ValueError:
         return f"Function {function_name} not found."
 
@@ -106,7 +106,7 @@ def run_gdb_command(binary_path: str, gdb_command: str) -> str:
 def run_ghidra_analysis(binary_path: str, script_name: Optional[str] = None) -> str:
     # This would call Ghidra headless. Adjust as needed.
     # Example Ghidra headless command (make sure Ghidra is installed and accessible):
-    project_dir = os.path.join(WORKSPACE_DIR, "ghidra_project")
+    project_dir = os.path.join(config.WORKSPACE_ROOT, "ghidra_project")
     os.makedirs(project_dir, exist_ok=True)
     ghidra_path = "/path/to/ghidra/support/analyzeHeadless"
     cmd = [ghidra_path, project_dir, "test_project", "-import", binary_path, "-analysisTimeout", "300", "-deleteProject"]

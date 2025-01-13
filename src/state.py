@@ -7,3 +7,4 @@ class MessagesState(TypedDict):
 class State(MessagesState):
     binary_path: str
     disassembled_path: str | None
+    workspace_path: str | None

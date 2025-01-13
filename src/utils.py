@@ -3,27 +3,46 @@ import os
 import subprocess
 import re
 import pprint
+import hashlib
+import shutil
 
-WORKSPACE_DIR = "decompile_workspace"
-os.makedirs(WORKSPACE_DIR, exist_ok=True)
+import src.config as config
+
+os.makedirs(config.WORKSPACE_ROOT, exist_ok=True)
 
 DOCKER_IMAGE = "gcc_linux_x86_64:latest"
 
-def extract_function_asm(disassemble_path, function_name):
+def hash_file(filepath: str) -> str:
+    hasher = hashlib.sha256()
+    with open(filepath, 'rb') as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+def create_workspace_for_binary(binary_source_path: str) -> str:
+    # Compute the hash for the binary
+    binary_hash = hash_file(binary_source_path)
+    # Create workspace directory if it doesn't exist
+    workspace_path = os.path.join(config.WORKSPACE_ROOT, binary_hash)
+    os.makedirs(workspace_path, exist_ok=True)
+    # Copy the binary into the workspace
+    binary_filename = os.path.basename(binary_source_path)
+    workspace_binary_path = os.path.join(workspace_path, binary_filename)
+    shutil.copy2(binary_source_path, workspace_binary_path)
+    return workspace_path
+
+def extract_function_asm(asm, function_name):
     # Extract the specified function's assembly
-    input_asm = ''
-    with open(disassemble_path, 'r') as f:
-        asm = f.read()
-        if f'<{function_name}>:' not in asm:
-            raise ValueError(f"Function {function_name} not found in the assembly.")
-        # Isolate the assembly for the specified function
-        asm = f'<{function_name}>:' + asm.split(f'<{function_name}>:')[-1].split('\n\n')[0]
-        asm_clean = ""
-        for line in asm.splitlines():
-            if len(line.split("\t")) < 3 and '00' in line:
-                continue
-            # Remove binary codes and comments
-            asm_clean += "\t".join(line.split("\t")[2:]).split("#")[0].strip() + "\n"
+    if f'<{function_name}>:' not in asm:
+        raise ValueError(f"Function {function_name} not found in the assembly.")
+    # Isolate the assembly for the specified function
+    asm = f'<{function_name}>:' + asm.split(f'<{function_name}>:')[-1].split('\n\n')[0]
+    asm_clean = ""
+    for line in asm.splitlines():
+        if len(line.split("\t")) < 3 and '00' in line:
+            continue
+        # Remove binary codes and comments
+        asm_clean += "\t".join(line.split("\t")[2:]).split("#")[0].strip() + "\n"
     input_asm = asm_clean.strip()
     return input_asm
 
@@ -78,13 +97,11 @@ def objdump(args: str) -> str:
 
 def disassemble_binary(binary_path, function_name=None, target_platform: str="linux"):
     # Disassemble the binary directly
-    disassemble_path = os.path.join(WORKSPACE_DIR, "disassembled_code.asm")
-    
     if target_platform == "mac":
         # Disassemble locally
         disassemble_command = ["objdump", "-dstrx", binary_path]
         # disassemble_command = ["objdump", "-ds", binary_path]
-        result = subprocess.run(disassemble_command, capture_output=True, text=True, check=True)
+        asm = subprocess.run(disassemble_command, capture_output=True, text=True, check=True)
     else:
         # Use Docker for disassembly
         docker_image = "gcc_linux_x86_64:latest"
@@ -95,18 +112,16 @@ def disassemble_binary(binary_path, function_name=None, target_platform: str="li
             f"-v {os.getcwd()}:/workspace {docker_image} "
             f"objdump -ds /workspace/{binary_path}"
         )
-        result = subprocess.run(docker_run_command, shell=True, capture_output=True, text=True, check=True)
+        asm = subprocess.run(docker_run_command, shell=True, capture_output=True, text=True, check=True)
 
     # Save disassembled code to a file for inspection
-    with open(disassemble_path, "w") as f:
-        f.write(result.stdout)
+    # with open(disassemble_path, "w") as f:
+    #     f.write(result.stdout)
     
     if function_name is None:
-        return result.stdout
+        return asm.stdout
     else:
-        input_asm = extract_function_asm(disassemble_path, function_name)
-    
-    return input_asm
+        return extract_function_asm(asm.stdout, function_name)
 
 def disassemble_section(binary_path, section_name):
     input_asm = disassemble_binary(binary_path)
@@ -124,7 +139,7 @@ def disassemble_section(binary_path, section_name):
 
 
 def compile_and_disassemble_c_code(c_code_path, function_name, target_platform):
-    binary_path = os.path.join(WORKSPACE_DIR, "compiled_binary")
+    binary_path = os.path.join(config.WORKSPACE_ROOT, "compiled_binary")
     
     if target_platform == "mac":
         function_name = "_" + function_name
@@ -139,12 +154,12 @@ def compile_and_disassemble_c_code(c_code_path, function_name, target_platform):
 
 def disassemble(input_path, function_name):
     # If the workspace directory does not exist, create it
-    if not os.path.exists(WORKSPACE_DIR):
-        os.makedirs(WORKSPACE_DIR)
+    if not os.path.exists(config.WORKSPACE_ROOT):
+        os.makedirs(config.WORKSPACE_ROOT)
     
     # Copy the C code or binary to the workspace for reference
     input_basename = os.path.basename(input_path)
-    workspace_input_path = os.path.join(WORKSPACE_DIR, input_basename)
+    workspace_input_path = os.path.join(config.WORKSPACE_ROOT, input_basename)
     if not os.path.exists(workspace_input_path):
         os.system(f"cp {input_path} {workspace_input_path}")
         

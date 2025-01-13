@@ -5,16 +5,20 @@ import gradio as gr
 from typing_extensions import Literal, Annotated
 from langchain_core.messages import HumanMessage, SystemMessage, BaseMessage, AIMessage, ToolMessage, AIMessageChunk
 from langchain_core.tools import tool
+from langchain_core.runnables import RunnableConfig
+from langchain.load.dump import dumps
+from langchain.load.load import loads
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import START, END, StateGraph, MessagesState
 from langgraph.prebuilt import ToolNode
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import InjectedState, InjectedStore
-from langchain_core.runnables import RunnableConfig
 import tiktoken
 import asyncio
 
-from src.utils import WORKSPACE_DIR, disassemble_binary
+import src.config as config
+from src.utils import disassemble_binary
+import src.utils as utils
 import src.tools as tools
 from src.state import State
 
@@ -69,7 +73,29 @@ def should_continue_or_feedback(state: State) -> Literal["tools", "feedback", EN
     print("\nFinished the conversation.")
     return END
 
+def save_state(state: State):
+    workspace_path = state.get("workspace_path")
+    if not workspace_path:
+        print("No workspace path found. Cannot save conversation history.")
+        print(state)
+        return
+    history_file = os.path.join(workspace_path, "state.json")
+    with open(history_file, "w") as hf:
+        hf.write(dumps(state))
+    print(f"Conversation history saved to {history_file}")
 
+def load_state(workspace_path: str) -> dict:
+    """
+    Load the state from a JSON file if it exists. Otherwise, return a new state.
+    """
+    state_file = os.path.join(workspace_path, "state.json")
+    if os.path.exists(state_file):
+        with open(state_file, "r") as f:
+            state = loads(f.read())
+        return state
+    else:
+        # Return a default state structure if no previous state exists
+        return None
 
 # Create the graph
 workflow = StateGraph(State)
@@ -97,7 +123,7 @@ CSS = """
 #chatbot { flex-grow: 1; overflow: auto;}
 """
 
-with gr.Blocks(css=CSS, title="Binary Analysis Agent") as demo:
+def demo_block():
     gr.Markdown("""
     # Binary Analysis and Decompilation Agent
     
@@ -141,69 +167,83 @@ with gr.Blocks(css=CSS, title="Binary Analysis Agent") as demo:
         if file is None:
             return gr.update(visible=True), None, "Please upload a binary file."
 
-        # Save the uploaded file to the workspace
-        new_filepath = os.path.join(WORKSPACE_DIR, "uploaded_binary.bin")
-        print(f"Saving file {file}")
-        with open(new_filepath, "wb") as f:
-            with open(file, "rb") as f2:
-                f.write(f2.read())
+        # Compute hash and create a unique workspace
+        workspace_path = utils.create_workspace_for_binary(file)
+        binary_filename = os.path.basename(file)
+        binary_path = os.path.join(workspace_path, binary_filename)
 
-        # Disassemble the binary
-        disassembled_code = disassemble_binary(new_filepath, function_name=None, target_platform="mac")
-        disassembled_path = os.path.join(WORKSPACE_DIR, "disassembled_code.asm")
-        
-        # Encode the text to get the list of tokens
-        tokens = encoding.encode(disassembled_code)
+        # Initialize or load conversation history if it exists
+        state = load_state(workspace_path)
+        if state is None:
+            # No conversation history found for this binary, create a new state
+            messages = []
 
-        # Count the number of tokens
-        num_tokens = len(tokens)
-        print(f"Number of tokens: {num_tokens}")
-
-        messages = []
-        
-        # Initialize state with binary and disassembled paths
-        state = {
-            "messages": messages,
-            "binary_path": new_filepath,
-            "disassembled_path": disassembled_path
-        }
-        
-        if num_tokens <= 64000: # Half of the token limit
-            # Add the disassembled code to the message history
+            # Disassemble the binary
+            disassembled_code = disassemble_binary(binary_path, function_name=None, target_platform="mac")
+            disassembled_path = os.path.join(workspace_path, "disassembled_code.asm")
             
-            tool_call_message = AIMessage(
-                content="The binary is small enough to disassemble. Disassembling the binary...",
-                tool_calls=[
-                    {
-                        "name": "disassemble_binary",
-                        "args": {},
-                        "id": f"{uuid.uuid4()}",
-                        "type": "tool_call",
-                    }
-                ],
-            )
-            messages.append(tool_call_message)
-            
-            disassembled_msg = ToolMessage(content=f"Disassembly of binary:\n\n{disassembled_code}", tool_call_id=tool_call_message.tool_calls[0]["id"])
-            messages.append(disassembled_msg)
-        else:
-            # Summarize the assembly code of the binary
-            tool_call_message = AIMessage(
-                content="The binary is too large to get the full disassembly. Summarizing the assembly code...",
-                tool_calls=[
-                    {
-                        "name": "summarize_assembly",
-                        "args": {},
-                        "id": f"{uuid.uuid4()}",
-                        "type": "tool_call",
-                    }
-                ],
-            )
-            messages.append(tool_call_message)
-            messages.extend(tool_node.invoke(state)["messages"])
+            # Save disassembled code in the workspace
+            with open(disassembled_path, "w") as f:
+                f.write(disassembled_code)
+
+            # Encode the text to get the list of tokens
+            tokens = encoding.encode(disassembled_code)
+            num_tokens = len(tokens)
+            print(f"Number of tokens: {num_tokens}")
+
+            # Initialize state with binary and disassembled paths
+            state = {
+                "messages": messages,
+                "binary_path": binary_path,
+                "disassembled_path": disassembled_path,
+                "workspace_path": workspace_path
+            }
+        
+            if num_tokens <= 64000: # Half of the token limit
+                # Add the disassembled code to the message history
+                
+                tool_call_message = AIMessage(
+                    content="The binary is small enough to disassemble. Disassembling the binary...",
+                    tool_calls=[
+                        {
+                            "name": "disassemble_binary",
+                            "args": {},
+                            "id": f"{uuid.uuid4()}",
+                            "type": "tool_call",
+                        }
+                    ],
+                )
+                messages.append(tool_call_message)
+                
+                disassembled_msg = ToolMessage(content=f"Disassembly of binary:\n\n{disassembled_code}", tool_call_id=tool_call_message.tool_calls[0]["id"])
+                messages.append(disassembled_msg)
+            else:
+                tool_call_message = AIMessage(
+                    content="The binary is too large to get the full disassembly. Summarizing the assembly code...",
+                    tool_calls=[
+                        {
+                            "name": "summarize_assembly",
+                            "args": {},
+                            "id": f"{uuid.uuid4()}",
+                            "type": "tool_call",
+                        }
+                    ],
+                )
+                messages.append(tool_call_message)
+                messages.extend(tool_node.invoke(state)["messages"])
+        
+            save_state(state)
         
         # Reset the chatbot
         chatbot.clear()
+            
+        # Load messages into the chatbot
+        print(state["messages"])
+        for msg in state["messages"]:
+            if isinstance(msg, HumanMessage):
+                chatbot.append({"role": "user", "content": msg.content})
+            elif isinstance(msg, AIMessage):
+                chatbot.append({"role": "assistant", "content": msg.content})
         
         return state, chatbot
 
@@ -214,6 +254,7 @@ with gr.Blocks(css=CSS, title="Binary Analysis Agent") as demo:
         config = {"configurable": {"thread_id": user_id}}
 
         if state is None:
+            print("State is None. Starting a new session...")
             state = {"messages": []}
 
         # Check if the binary path exists in the state
@@ -252,7 +293,8 @@ with gr.Blocks(css=CSS, title="Binary Analysis Agent") as demo:
                         history[-1]["content"] += msg.content
 
                     yield history, state, user_id, gr.Textbox(value="", interactive=False)
-        
+        else:
+            save_state(state)
         yield history, state, user_id, gr.Textbox(value="", interactive=True)
         
     
@@ -276,4 +318,7 @@ with gr.Blocks(css=CSS, title="Binary Analysis Agent") as demo:
     4. Check the 'Debug Information' panel below the chat to see the raw messages, responses, and tool calls.
     """)
 
-demo.launch()
+if __name__ == "__main__":
+    with gr.Blocks(css=CSS, title="Binary Analysis Agent") as demo:
+        demo_block()
+    demo.launch()
