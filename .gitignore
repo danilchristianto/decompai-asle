@@ -162,3 +162,7 @@ cython_debug/
 #.idea/
 
 /decompile_workspace/
+latex-build/
+tmp/
+repomix-output.txt
+.DS_Store
