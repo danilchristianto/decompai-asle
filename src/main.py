@@ -13,8 +13,11 @@ from langgraph.graph import START, END, StateGraph, MessagesState
 from langgraph.prebuilt import ToolNode
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import InjectedState, InjectedStore
+from langchain_community.agent_toolkits import FileManagementToolkit
+from langchain_community.tools import CopyFileTool, DeleteFileTool, FileSearchTool, MoveFileTool, ReadFileTool, WriteFileTool, ListDirectoryTool
 import tiktoken
 import asyncio
+import shutil
 
 import src.config as config
 from src.utils import disassemble_binary
@@ -23,14 +26,19 @@ import src.tools as tools
 from src.state import State
 
 # Collect all tools
-tools = [tools.summarize_assembly, tools.disassemble_binary, tools.disassemble_section] #, get_asm, run_gdb, run_ghidra, readfile, writefile]
+custom_tools = [tools.summarize_assembly, tools.disassemble_binary, tools.disassemble_section] #, tools.get_decompiled_directory_tree, tools.read_decompiled_files, tools.write_decompiled_files] #, get_asm, run_gdb, run_ghidra, readfile, writefile]
+# file_management_tools = [tools.write_file] # FileManagementToolkit(root_dir=config.WORKSPACE_ROOT+"/decompiled").get_tools()]
+file_management_tools = [tools.create_tool_function(tool) for tool in [WriteFileTool]]
 
-tool_node = ToolNode(tools)
+
+all_tools = custom_tools + file_management_tools
+
+tool_node = ToolNode(all_tools)
 
 model_name = "gpt-4o-mini"
 
 # Use the OpenAI model, bind it to the tools
-model = ChatOpenAI(model=model_name, temperature=0, openai_api_key=os.getenv("OPENAI_API_KEY"), streaming=True).bind_tools(tools)
+model = ChatOpenAI(model=model_name, temperature=0, openai_api_key=os.getenv("OPENAI_API_KEY"), streaming=True).bind_tools(all_tools)
 
 encoding = tiktoken.encoding_for_model(model_name)
 
@@ -96,6 +104,29 @@ def load_state(workspace_path: str) -> dict:
     else:
         # Return a default state structure if no previous state exists
         return None
+    
+def erase_workspace(workspace_path: str):
+    if os.path.exists(workspace_path):
+        # Ensure the path starts with "decompile_workspace/"
+        if not workspace_path.startswith("decompile_workspace/"):
+            raise ValueError(f"Invalid workspace path: {workspace_path}")
+        else:
+            # Delete the decompiled folder
+            decompiled_path = os.path.join(workspace_path, config.DECOMPILED_FOLDER_NAME)
+            if os.path.exists(decompiled_path):
+                shutil.rmtree(decompiled_path)
+                
+            # Delete the state.json file if it exists
+            state_file = os.path.join(workspace_path, "state.json")
+            if os.path.exists(state_file):
+                os.remove(state_file)
+            
+            # Delete the .asm file if it exists
+            asm_file = os.path.join(workspace_path, "disassembled_code.asm")
+            if os.path.exists(asm_file):
+                os.remove(asm_file)
+    else:
+        print(f"Workspace not found at {workspace_path}")
 
 # Create the graph
 workflow = StateGraph(State)
@@ -150,7 +181,6 @@ def demo_block():
     )
     user_id = gr.State(None)
     gradio_state = gr.State(None)  # {"messages": [...BaseMessage...]}
-    # upload_button = gr.UploadButton("Click to Upload a File", file_types=[".bin"], file_count="single")
     
     # Replace UploadButton with File component
     file_input = gr.File(
@@ -159,24 +189,38 @@ def demo_block():
         file_count="single",
         type="filepath"
     )
-
-    # A Markdown component to display debug info
-    debug_markdown = gr.Markdown(label="Debug Information", value="")
-
-    def start_session(file, chatbot: gr.Chatbot):
+    
+    erase_button = gr.Button("Erase Session", visible=False)
+    
+    def start_session(file, chatbot: gr.Chatbot, erase_button: gr.Button):
         if file is None:
             return gr.update(visible=True), None, "Please upload a binary file."
+        
+        erase_button = gr.Button(erase_button, visible=True)
 
         # Compute hash and create a unique workspace
         workspace_path = utils.create_workspace_for_binary(file)
         binary_filename = os.path.basename(file)
         binary_path = os.path.join(workspace_path, binary_filename)
-
+        
         # Initialize or load conversation history if it exists
         state = load_state(workspace_path)
         if state is None:
             # No conversation history found for this binary, create a new state
             messages = []
+            
+            system_prompt ="""You are a binary analysis and decompilation agent. Your task is to analyze and decompile the binary provided by the user into separate files within a subfolder in the binary's workspace. You have access to tools that let you read from and write to this subfolder, as well as list its file tree. Use only paths relative to the workspace folder to access files.
+
+            Guidelines:
+            - If the user does not specify an instruction, start iterating to decompile the entire binary.
+            - Use the file tools to manage decompiled code.
+            - Maintain a summary of the decompiled codebase and keep track of the decompiled folder tree in your context to avoid redundant decompilation of the same functions or sections.
+
+            Now, begin by analyzing and decompiling the binary step by step until the entire binary is decompiled.
+            """
+            # - Always operate within the 'decompiled' subfolder of the binary's workspace, and do not access files outside of this folder.
+
+            messages.append(SystemMessage(content=system_prompt))
 
             # Disassemble the binary
             disassembled_code = disassemble_binary(binary_path, function_name=None, target_platform="mac")
@@ -244,8 +288,21 @@ def demo_block():
                 chatbot.append({"role": "user", "content": msg.content})
             elif isinstance(msg, AIMessage):
                 chatbot.append({"role": "assistant", "content": msg.content})
+            # elif isinstance(msg, SystemMessage):
+            #     chatbot.append({"role": "assistant", "content": msg.content})
+            # elif isinstance(msg, ToolMessage):
+            #     chatbot.append({"role": "assistant", "content": msg.content, "tool_call_id": msg.tool_call_id})
         
-        return state, chatbot
+        return state, chatbot, erase_button
+    
+    def erase_session(state, chatbot):
+        workspace_path = state.get("workspace_path")
+        if not workspace_path:
+            print("No workspace path found. Cannot erase the session.")
+            return state, chatbot
+        erase_workspace(workspace_path)
+        chatbot.clear()
+        return start_session(state["binary_path"], chatbot, erase_button)
 
     async def process_request(message, history, state, user_id):
         if not user_id:
@@ -300,8 +357,8 @@ def demo_block():
     
     file_input.upload(
         start_session,
-        inputs=[file_input, chatbot],
-        outputs=[gradio_state, chatbot]
+        inputs=[file_input, chatbot, erase_button],
+        outputs=[gradio_state, chatbot, erase_button]
     )
 
     gradio_msg.submit(
@@ -309,6 +366,14 @@ def demo_block():
         inputs=[gradio_msg, chatbot, gradio_state, user_id],
         outputs=[chatbot, gradio_state, user_id, gradio_msg]
     )
+    
+    # Link the erase_button to the erase_history function
+    erase_button.click(
+        erase_session,
+        inputs=[gradio_state, chatbot],
+        outputs=[gradio_state, chatbot]
+    )
+
 
     gr.Markdown("""
     **Instructions:**

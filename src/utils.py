@@ -12,6 +12,37 @@ os.makedirs(config.WORKSPACE_ROOT, exist_ok=True)
 
 DOCKER_IMAGE = "gcc_linux_x86_64:latest"
 
+image_built = False
+
+def build_docker_image():
+    global image_built
+    if image_built:
+        return
+    docker_build_command = (
+        f"docker buildx build --platform linux/amd64 "
+        f"-t {DOCKER_IMAGE} . --load"
+    )
+    subprocess.run(docker_build_command, shell=True, check=True)
+    image_built = True
+
+def run_command_in_docker(command: str) -> str:
+    build_docker_image()
+    
+    container_name = "decompai_runner"
+    
+    # {os.getcwd()}
+    
+    docker_run_command = (
+        f"docker run --rm --name {container_name} "
+        f"-v ./decompile_workspace:/decompile_workspace "
+        f"-v ./binaries:/binaries "
+        f"-v ./source_code:/source_code "
+        f"--platform linux/amd64 -w / {DOCKER_IMAGE} "
+        f"/bin/sh -c '{command}'"
+    )
+    result = subprocess.run(docker_run_command, shell=True, capture_output=True, text=True, check=True)
+    return result
+
 def hash_file(filepath: str) -> str:
     hasher = hashlib.sha256()
     with open(filepath, 'rb') as f:
@@ -25,10 +56,14 @@ def create_workspace_for_binary(binary_source_path: str) -> str:
     # Create workspace directory if it doesn't exist
     workspace_path = os.path.join(config.WORKSPACE_ROOT, binary_hash)
     os.makedirs(workspace_path, exist_ok=True)
+    # Create decompiled directory if it doesn't exist
+    decompiled_path = os.path.join(workspace_path, config.DECOMPILED_FOLDER_NAME)
+    os.makedirs(decompiled_path, exist_ok=True)
     # Copy the binary into the workspace
     binary_filename = os.path.basename(binary_source_path)
     workspace_binary_path = os.path.join(workspace_path, binary_filename)
-    shutil.copy2(binary_source_path, workspace_binary_path)
+    if binary_source_path != workspace_binary_path:
+        shutil.copy2(binary_source_path, workspace_binary_path)
     return workspace_path
 
 def extract_function_asm(asm, function_name):
@@ -47,30 +82,10 @@ def extract_function_asm(asm, function_name):
     return input_asm
 
 def compile(target: str, c_code_path: str, binary_path: str):
-    if target == "mac":
-        # Compile locally on macOS
-        compile_command = f"gcc -o {binary_path} {c_code_path} -lm"
-        subprocess.run(compile_command, shell=True, check=True)
-    else:
-        # Use Docker for cross-platform compilation (Linux x86_64)
-        docker_image = "gcc_linux_x86_64:latest"
-        container_name = "c_code_compiler"
-        
-        # Build Docker image targeting linux/amd64 architecture
-        docker_build_command = (
-            f"docker buildx build --platform linux/amd64 "
-            f"-t {docker_image} . --load"
-        )
-        docker_run_command = (
-            f"docker run --rm --name {container_name} "
-            f"-v {os.getcwd()}:/workspace {docker_image} "
-            f"gcc -o /workspace/{binary_path} /workspace/{c_code_path} -lm"
-        )
-        
-        # Build Docker image
-        subprocess.run(docker_build_command, shell=True, check=True)
-        # Compile using Docker
-        subprocess.run(docker_run_command, shell=True, check=True)
+    # TODO: Fix this to put the source code in the workspace
+    run_command_in_docker(
+        f"gcc -o /{binary_path} /{c_code_path} -lm"
+    )
         
 def objdump(args: str) -> str:
     """
@@ -80,43 +95,18 @@ def objdump(args: str) -> str:
     Returns:
         str: The output from the objdump command.
     """
-    # Use Docker for disassembly
-    container_name = "disassembler"
     
-    docker_run_command = (
-        f"docker run --rm --name {container_name} "
-        f"-v {os.getcwd()}:/workspace -w /workspace --platform linux/amd64 gcc:latest "
-        f"objdump {args}"
-    )
     try:
-        result = subprocess.run(docker_run_command, shell=True, capture_output=True, text=True, check=True)
+        result = run_command_in_docker(
+            f"objdump {args}"
+        )
     except subprocess.CalledProcessError as e:
         print(f"Error running objdump: {e.stderr}")
     
     return result.stdout
 
 def disassemble_binary(binary_path, function_name=None, target_platform: str="linux"):
-    # Disassemble the binary directly
-    if target_platform == "mac":
-        # Disassemble locally
-        disassemble_command = ["objdump", "-dstrx", binary_path]
-        # disassemble_command = ["objdump", "-ds", binary_path]
-        asm = subprocess.run(disassemble_command, capture_output=True, text=True, check=True)
-    else:
-        # Use Docker for disassembly
-        docker_image = "gcc_linux_x86_64:latest"
-        container_name = "disassembler"
-        
-        docker_run_command = (
-            f"docker run --rm --name {container_name} "
-            f"-v {os.getcwd()}:/workspace {docker_image} "
-            f"objdump -ds /workspace/{binary_path}"
-        )
-        asm = subprocess.run(docker_run_command, shell=True, capture_output=True, text=True, check=True)
-
-    # Save disassembled code to a file for inspection
-    # with open(disassemble_path, "w") as f:
-    #     f.write(result.stdout)
+    asm = run_command_in_docker(f"cd {os.path.dirname(binary_path)} && objdump -ds {os.path.basename(binary_path)}")
     
     if function_name is None:
         return asm.stdout

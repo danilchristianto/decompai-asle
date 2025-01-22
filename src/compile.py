@@ -1,10 +1,11 @@
 import os
-import src.utils as utils  # Assuming utils.py is in the src directory
 import subprocess
 
+import src.utils as utils  # Assuming utils.py is in the src directory
+
 # Define paths
-c_code_path = "c_code/fibonacci.c"
-binary_path = "binaries/fibonacci.bin"
+c_code_path = "source_code/simu_core.c"
+binary_path = "binaries/simu_core.bin"
 
 # Ensure the output directory exists
 os.makedirs(os.path.dirname(binary_path), exist_ok=True)
