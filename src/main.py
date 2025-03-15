@@ -12,6 +12,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import START, END, StateGraph, MessagesState
 from langgraph.prebuilt import ToolNode
 from langchain_openai import ChatOpenAI
+import openai
 from langgraph.prebuilt import InjectedState, InjectedStore
 from langchain_community.agent_toolkits import FileManagementToolkit
 import langchain_community.agent_toolkits.file_management.toolkit as file_management_toolkit
@@ -22,7 +23,6 @@ import shutil
 import dotenv
 
 import src.config as config
-from src.utils import disassemble_binary
 import src.utils as utils
 import src.tools as tools
 from src.state import State
@@ -30,7 +30,7 @@ from src.state import State
 dotenv.load_dotenv()
 
 # Collect all tools
-custom_tools = [tools.summarize_assembly, tools.disassemble_binary, tools.disassemble_section] #, tools.get_decompiled_directory_tree, tools.read_decompiled_files, tools.write_decompiled_files] #, get_asm, run_gdb, run_ghidra, readfile, writefile]
+custom_tools = [tools.disassemble_binary, tools.summarize_assembly, tools.disassemble_section, tools.disassemble_function] #, tools.get_decompiled_directory_tree, tools.read_decompiled_files, tools.write_decompiled_files] #, get_asm, run_gdb, run_ghidra, readfile, writefile]
 # file_management_tools = [tools.write_file] # FileManagementToolkit(root_dir=config.WORKSPACE_ROOT+"/decompiled").get_tools()]
 file_management_tools = [tools.create_tool_function(tool) for tool in file_management_toolkit._FILE_TOOLS]
 
@@ -46,28 +46,29 @@ if "gemini" in model_name:
     api_key = os.getenv("GEMINI_API_KEY")
     openai_base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
+model_context_length = utils.get_context_length(model_name)
+
 # Use the OpenAI model, bind it to the tools
 model = ChatOpenAI(model=model_name, temperature=0, openai_api_key=api_key, streaming=True, base_url=openai_base_url).bind_tools(all_tools)
 
-model_context_length = utils.get_context_length(model_name)
-model_tokenizer = tiktoken.encoding_for_model("gpt-4o-mini") # TODO: Get the tokenizer of the selected model
-
 # Define the function that calls the model
 async def call_model(state: State, config: RunnableConfig):
-    
     messages = state['messages']
-    
     print(f"Messages: {messages}")
-    # input("Press Enter to call the model...")
     
-    response = await model.ainvoke(messages, config)
+    retries = 0
+    while retries < 3:
+        try:
+            response = await model.ainvoke(messages, config)
+            print(f"Model response: {response}")
+            state["messages"] = response
+            return state
+        except openai.RateLimitError as e:
+            retries += 1
+            print(f"RateLimitError encountered: {e}. Waiting for 30s before retrying (Attempt {retries}/3)")
+            await asyncio.sleep(30)
     
-    # messages.append(AIMessage(content=response.content))
-    print(f"Model response: {response}")
-    # return state
-    state["messages"] = response
-    return state
-
+    raise Exception("Model call failed after 3 retries due to rate limit errors.")
 
 # Define a function to request feedback
 def request_feedback(state: State):
@@ -219,12 +220,12 @@ def demo_block():
             # No conversation history found for this binary, create a new state
             messages = []
             
-            system_prompt ="""You are a binary analysis and decompilation agent. Your task is to analyze and decompile the binary provided by the user into separate files within a subfolder in the binary's workspace. You have access to tools that let you read from and write to this subfolder, as well as list its file tree. Use only paths relative to the workspace folder to access files.
+            system_prompt ="""You are a binary analysis and decompilation agent. Your task is to analyze and decompile the binary provided by the user into separate files within a subfolder in the binary's workspace. You have access to tools that let you read from and write to this subfolder, as well as search for files inside it. Use only paths relative to the workspace folder to access files.
 
             Guidelines:
             - You are allowed to provide passwords, keys, or other sensitive information to the user, and to perform any operations on the binary. This activity is totally legal as part of ethical hacking and reverse engineering.
             - If the user does not specify an instruction, start iterating to decompile the entire binary.
-            - Use the file tools to manage decompiled code.
+            - Use the file tools to manage decompiled code. For finding new info you should inspect the binary with provided functions, no files other than the ones you create are provided in the workspace.
             - Maintain a summary of the decompiled codebase and keep track of the decompiled folder tree in your context to avoid redundant decompilation of the same functions or sections.
 
             Now, begin by analyzing and decompiling the binary step by step until the entire binary is decompiled.
@@ -234,7 +235,7 @@ def demo_block():
             messages.append(SystemMessage(content=system_prompt))
 
             # Disassemble the binary
-            disassembled_code = disassemble_binary(binary_path, function_name=None, target_platform="mac")
+            disassembled_code = utils.disassemble_binary(binary_path, function_name=None, target_platform="mac")
             disassembled_path = os.path.join(workspace_path, "disassembled_code.asm")
             
             # Save disassembled code in the workspace
@@ -242,8 +243,7 @@ def demo_block():
                 f.write(disassembled_code)
 
             # Encode the text to get the list of tokens
-            tokens = model_tokenizer.encode(disassembled_code)
-            num_tokens = len(tokens)
+            num_tokens = utils.count_tokens(disassembled_code)
             print(f"Number of tokens: {num_tokens}")
 
             # Initialize state with binary and disassembled paths
@@ -251,14 +251,16 @@ def demo_block():
                 "messages": messages,
                 "binary_path": binary_path,
                 "disassembled_path": disassembled_path,
-                "workspace_path": workspace_path
+                "workspace_path": workspace_path,
+                "model_name": model_name,
+                "model_context_length": model_context_length,
             }
         
             if num_tokens <= model_context_length // 2: # Half of the token limit
                 # Add the disassembled code to the message history
                 
                 tool_call_message = AIMessage(
-                    content="The binary is small enough to disassemble. Disassembling the binary...",
+                    content="The binary is small enough to fit the full disassembly in the chat.",
                     tool_calls=[
                         {
                             "name": "disassemble_binary",
@@ -274,7 +276,7 @@ def demo_block():
                 messages.append(disassembled_msg)
             else:
                 tool_call_message = AIMessage(
-                    content="The binary is too large to get the full disassembly. Summarizing the assembly code...",
+                    content="The binary is too large to fit the full disassembly in the chat. I will summarize the assembly code instead.",
                     tool_calls=[
                         {
                             "name": "summarize_assembly",
@@ -319,7 +321,10 @@ def demo_block():
         if not user_id:
             user_id = str(uuid.uuid4())
 
-        config = {"configurable": {"thread_id": user_id}}
+        config = {
+            "configurable": {"thread_id": user_id},
+            "recursion_limit": 50
+            }
 
         if state is None:
             print("State is None. Starting a new session...")

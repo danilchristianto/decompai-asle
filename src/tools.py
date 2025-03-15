@@ -18,7 +18,7 @@ from inspect import Signature, Parameter
 
 import src.config as config
 import src.utils as utils
-from src.utils import extract_function_asm
+from src.utils import disassemble_function
 from src.state import State
 
 def get_decompiled_folder_path(state: State) -> str:
@@ -77,69 +77,6 @@ def get_decompiled_directory_tree(
     return json.dumps(tree, indent=2)
 
 @tool
-def read_decompiled_files(
-    file_paths: List[str],
-    state: Annotated[State, InjectedState]
-) -> str:
-    """
-    Read one or multiple files from the decompiled subfolder.
-    Input: List of relative file paths.
-    Output: JSON mapping of file paths to their contents.
-    """
-    import json
-    decompiled_path = get_decompiled_folder_path(state)
-    
-    print("Reading files:", file_paths)
-    
-    result = {}
-    for rel_path in file_paths:
-        abs_path = os.path.join(decompiled_path, rel_path)
-        # Ensure the file is inside the decompiled folder
-        if not abs_path.startswith(decompiled_path):
-            result[rel_path] = "Access denied."
-            continue
-        if os.path.exists(abs_path) and os.path.isfile(abs_path):
-            with open(abs_path, "r") as f:
-                result[rel_path] = f.read()
-        else:
-            result[rel_path] = "File does not exist."
-    return json.dumps(result, indent=2)
-
-@tool
-def write_decompiled_files(
-    file_path_content_pairs: Dict[str, str],
-    state: Annotated[State, InjectedState]
-) -> str:
-    """
-    Writes decompiled files to the specified relative paths within the decompiled folder.
-    Args:
-        file_path_content_pairs (Dict[str, str]): A dictionary where keys are relative file paths and values are the file contents.
-    Returns:
-        str: A JSON-formatted string indicating the result of each file write operation. The keys are the relative file paths and the values are the status messages.
-    """
-    import json
-    decompiled_path = get_decompiled_folder_path(state)
-    
-    result = {}
-    for rel_path, content in file_path_content_pairs.items():
-        # Remove leading slashes of the relative path, and remove "decompiled/" if present
-        rel_path = rel_path.lstrip("/")
-        if rel_path.startswith(config.DECOMPILED_FOLDER_NAME):
-            rel_path = rel_path[len(config.DECOMPILED_FOLDER_NAME):].lstrip("/")
-        
-        abs_path = os.path.join(decompiled_path, rel_path)
-        # Ensure the file is inside the decompiled folder
-        if not abs_path.startswith(decompiled_path):
-            result[rel_path] = "Access denied."
-            continue
-        # Create directories if they don't exist
-        os.makedirs(os.path.dirname(abs_path), exist_ok=True)
-        with open(abs_path, "w") as f:
-            f.write(content)
-        result[rel_path] = "File written successfully."
-    return json.dumps(result, indent=2)
-
-@tool
 def summarize_assembly(
     state: Annotated[State, InjectedState]
     ) -> str:
@@ -154,6 +91,10 @@ def disassemble_binary(
     ) -> str:
     """Disassemble the binary at binary_path."""
     assembly_code = utils.disassemble_binary(binary_path=state["binary_path"])
+    
+    if utils.count_tokens(assembly_code, state["model_name"]) > state["model_context_length"] // 2:
+        raise ValueError("Disassembly too long for model context length.")
+    
     return f"Disassembly of binary:\n\n{assembly_code}"
 
 @tool
@@ -163,7 +104,24 @@ def disassemble_section(
     ) -> str:
     """Disassemble a section of the binary at binary_path."""
     assembly_code = utils.disassemble_section(binary_path=state["binary_path"], section_name=section_name)
+    
+    if utils.count_tokens(assembly_code, state["model_name"]) > state["model_context_length"] // 2:
+        raise ValueError("Disassembly too long for model context length.")
+    
     return f"Disassembly of section {section_name}:\n\n{assembly_code}"
+
+@tool
+def disassemble_function(
+    function_name: str,
+    state: Annotated[State, InjectedState]
+    ) -> str:
+    """Disassemble a function from the binary at binary_path."""
+    assembly_code = utils.disassemble_function(binary_path=state["binary_path"], function_name=function_name)
+    
+    if utils.count_tokens(assembly_code, state["model_name"]) > state["model_context_length"] // 2:
+        raise ValueError("Disassembly too long for model context length.")
+    
+    return f"Disassembly of function {function_name}:\n\n{assembly_code}"
 
 @tool
 def run_gdb(args: str) -> str:
@@ -184,21 +142,6 @@ def run_ghidra(args: str) -> str:
     else:
         binary = args
         return run_ghidra_analysis(binary, None)
-
-def get_function_asm(binary_path: str, function_name: str) -> str:
-    # Re-run disassembly for just one function by name
-    # We'll just reuse a snippet from utils by writing a temporary file to run extraction on.
-    # In a real scenario, you'd rely on the previously saved disassembly file or cache.
-    disasm_cmd = ["objdump", "-ds", binary_path]
-    result = subprocess.run(disasm_cmd, capture_output=True, text=True, check=True)
-    asm_path = os.path.join(config.WORKSPACE_ROOT, "temp_disassembly.asm")
-    with open(asm_path, "w") as f:
-        f.write(result.stdout)
-    
-    try:
-        return extract_function_asm(result.stdout, function_name)
-    except ValueError:
-        return f"Function {function_name} not found."
 
 def run_gdb_command(binary_path: str, gdb_command: str) -> str:
     # Run GDB in batch mode:

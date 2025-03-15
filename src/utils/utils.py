@@ -66,21 +66,6 @@ def create_workspace_for_binary(binary_source_path: str) -> str:
         shutil.copy2(binary_source_path, workspace_binary_path)
     return workspace_path
 
-def extract_function_asm(asm, function_name):
-    # Extract the specified function's assembly
-    if f'<{function_name}>:' not in asm:
-        raise ValueError(f"Function {function_name} not found in the assembly.")
-    # Isolate the assembly for the specified function
-    asm = f'<{function_name}>:' + asm.split(f'<{function_name}>:')[-1].split('\n\n')[0]
-    asm_clean = ""
-    for line in asm.splitlines():
-        if len(line.split("\t")) < 3 and '00' in line:
-            continue
-        # Remove binary codes and comments
-        asm_clean += "\t".join(line.split("\t")[2:]).split("#")[0].strip() + "\n"
-    input_asm = asm_clean.strip()
-    return input_asm
-
 def compile(target: str, c_code_path: str, binary_path: str):
     # TODO: Fix this to put the source code in the workspace
     run_command_in_docker(
@@ -111,7 +96,7 @@ def disassemble_binary(binary_path, function_name=None, target_platform: str="li
     if function_name is None:
         return asm.stdout
     else:
-        return extract_function_asm(asm.stdout, function_name)
+        return disassemble_function(asm.stdout, function_name)
 
 def disassemble_section(binary_path, section_name):
     input_asm = disassemble_binary(binary_path)
@@ -127,6 +112,22 @@ def disassemble_section(binary_path, section_name):
     else:
         return None
 
+def disassemble_function(binary_path, function_name):
+    input_asm = disassemble_binary(binary_path)
+    
+    # Split the disassembled output into blocks separated by double newlines
+    blocks = input_asm.split('\n\n')
+    
+    # Look for a block whose first line ends with the function marker
+    for block in blocks:
+        lines = block.splitlines()
+        if not lines:
+            continue
+        first_line = lines[0]
+        if first_line.rstrip().endswith(f"<{function_name}>:"):
+            return block
+    
+    raise ValueError(f"Function {function_name} not found in the assembly.")
 
 def compile_and_disassemble_c_code(c_code_path, function_name, target_platform):
     binary_path = os.path.join(config.WORKSPACE_ROOT, "compiled_binary")
@@ -266,4 +267,3 @@ if __name__ == "__main__":
     # pp.pprint(summarize_assembly(binary_path="decompile_workspace/uploaded_binary.bin"))
     
     print(disassemble_section("decompile_workspace/uploaded_binary.bin", ".init"))
-    
