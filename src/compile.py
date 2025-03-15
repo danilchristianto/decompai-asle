@@ -1,7 +1,7 @@
 import os
 import subprocess
 
-import src.utils as utils  # Assuming utils.py is in the src directory
+import src.utils.utils as utils  # Assuming utils.py is in the src directory
 
 # Define paths
 c_code_path = "source_code/simu_core.c"

@@ -3,6 +3,13 @@ import subprocess
 from typing_extensions import Optional, Annotated, List, Dict, Type, Callable, Any
 from langchain_core.tools import tool
 from langchain_community.tools.file_management.write import WriteFileTool, WriteFileInput, BaseFileToolMixin
+from langchain_core.messages import (
+    AIMessage,
+    AnyMessage,
+    ToolCall,
+    ToolMessage,
+    convert_to_messages,
+)
 from langgraph.prebuilt import InjectedState, InjectedStore
 from langchain_core.callbacks import CallbackManagerForToolRun
 import json
@@ -56,20 +63,6 @@ def create_tool_function(cls: Type) -> Callable:
     dynamic_tool = tool(args_schema=NewSchema)(dynamic_tool)
     
     return dynamic_tool
-
-@tool
-def write_file(
-        state: Annotated[State, InjectedState],
-        file_path: str = Field(..., description="name of file"),
-        text: str = Field(..., description="text to write to file"),
-        append: bool = Field(
-            default=False, description="Whether to append to an existing file."
-        ),
-    ) -> str:
-    """Write file to disk"""
-    workspace_path = state["workspace_path"]
-    return WriteFileTool(root_dir=os.path.join(workspace_path, config.DECOMPILED_FOLDER_NAME))._run(file_path, text, append)
-
 
 @tool
 def get_decompiled_directory_tree(
@@ -163,6 +156,7 @@ def disassemble_binary(
     assembly_code = utils.disassemble_binary(binary_path=state["binary_path"])
     return f"Disassembly of binary:\n\n{assembly_code}"
 
+@tool
 def disassemble_section(
     section_name: str,
     state: Annotated[State, InjectedState]

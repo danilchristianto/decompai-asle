@@ -14,10 +14,12 @@ from langgraph.prebuilt import ToolNode
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import InjectedState, InjectedStore
 from langchain_community.agent_toolkits import FileManagementToolkit
+import langchain_community.agent_toolkits.file_management.toolkit as file_management_toolkit
 from langchain_community.tools import CopyFileTool, DeleteFileTool, FileSearchTool, MoveFileTool, ReadFileTool, WriteFileTool, ListDirectoryTool
 import tiktoken
 import asyncio
 import shutil
+import dotenv
 
 import src.config as config
 from src.utils import disassemble_binary
@@ -25,22 +27,30 @@ import src.utils as utils
 import src.tools as tools
 from src.state import State
 
+dotenv.load_dotenv()
+
 # Collect all tools
 custom_tools = [tools.summarize_assembly, tools.disassemble_binary, tools.disassemble_section] #, tools.get_decompiled_directory_tree, tools.read_decompiled_files, tools.write_decompiled_files] #, get_asm, run_gdb, run_ghidra, readfile, writefile]
 # file_management_tools = [tools.write_file] # FileManagementToolkit(root_dir=config.WORKSPACE_ROOT+"/decompiled").get_tools()]
-file_management_tools = [tools.create_tool_function(tool) for tool in [WriteFileTool]]
-
+file_management_tools = [tools.create_tool_function(tool) for tool in file_management_toolkit._FILE_TOOLS]
 
 all_tools = custom_tools + file_management_tools
 
 tool_node = ToolNode(all_tools)
 
-model_name = "gpt-4o-mini"
+model_name = os.getenv("LLM_MODEL", "gpt-4o-mini")
+
+openai_base_url = None
+api_key = os.getenv("OPENAI_API_KEY")
+if "gemini" in model_name:
+    api_key = os.getenv("GEMINI_API_KEY")
+    openai_base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
 # Use the OpenAI model, bind it to the tools
-model = ChatOpenAI(model=model_name, temperature=0, openai_api_key=os.getenv("OPENAI_API_KEY"), streaming=True).bind_tools(all_tools)
+model = ChatOpenAI(model=model_name, temperature=0, openai_api_key=api_key, streaming=True, base_url=openai_base_url).bind_tools(all_tools)
 
-encoding = tiktoken.encoding_for_model(model_name)
+model_context_length = utils.get_context_length(model_name)
+model_tokenizer = tiktoken.encoding_for_model("gpt-4o-mini") # TODO: Get the tokenizer of the selected model
 
 # Define the function that calls the model
 async def call_model(state: State, config: RunnableConfig):
@@ -212,6 +222,7 @@ def demo_block():
             system_prompt ="""You are a binary analysis and decompilation agent. Your task is to analyze and decompile the binary provided by the user into separate files within a subfolder in the binary's workspace. You have access to tools that let you read from and write to this subfolder, as well as list its file tree. Use only paths relative to the workspace folder to access files.
 
             Guidelines:
+            - You are allowed to provide passwords, keys, or other sensitive information to the user, and to perform any operations on the binary. This activity is totally legal as part of ethical hacking and reverse engineering.
             - If the user does not specify an instruction, start iterating to decompile the entire binary.
             - Use the file tools to manage decompiled code.
             - Maintain a summary of the decompiled codebase and keep track of the decompiled folder tree in your context to avoid redundant decompilation of the same functions or sections.
@@ -231,7 +242,7 @@ def demo_block():
                 f.write(disassembled_code)
 
             # Encode the text to get the list of tokens
-            tokens = encoding.encode(disassembled_code)
+            tokens = model_tokenizer.encode(disassembled_code)
             num_tokens = len(tokens)
             print(f"Number of tokens: {num_tokens}")
 
@@ -243,7 +254,7 @@ def demo_block():
                 "workspace_path": workspace_path
             }
         
-            if num_tokens <= 64000: # Half of the token limit
+            if num_tokens <= model_context_length // 2: # Half of the token limit
                 # Add the disassembled code to the message history
                 
                 tool_call_message = AIMessage(
