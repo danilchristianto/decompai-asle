@@ -14,6 +14,7 @@ DOCKER_IMAGE = "gcc_linux_x86_64:latest"
 
 image_built = False
 
+
 def build_docker_image():
     global image_built
     if image_built:
@@ -25,13 +26,14 @@ def build_docker_image():
     subprocess.run(docker_build_command, shell=True, check=True)
     image_built = True
 
+
 def run_command_in_docker(command: str) -> str:
     build_docker_image()
-    
+
     container_name = "decompai_runner"
-    
+
     # {os.getcwd()}
-    
+
     docker_run_command = (
         f"docker run --rm --name {container_name} "
         f"-v ./decompile_workspace:/decompile_workspace "
@@ -40,8 +42,10 @@ def run_command_in_docker(command: str) -> str:
         f"--platform linux/amd64 -w / {DOCKER_IMAGE} "
         f"/bin/sh -c '{command}'"
     )
-    result = subprocess.run(docker_run_command, shell=True, capture_output=True, text=True, check=True)
+    result = subprocess.run(docker_run_command, shell=True,
+                            capture_output=True, text=True, check=True)
     return result
+
 
 def hash_file(filepath: str) -> str:
     hasher = hashlib.sha256()
@@ -50,6 +54,7 @@ def hash_file(filepath: str) -> str:
             hasher.update(chunk)
     return hasher.hexdigest()
 
+
 def create_workspace_for_binary(binary_source_path: str) -> str:
     # Compute the hash for the binary
     binary_hash = hash_file(binary_source_path)
@@ -57,7 +62,8 @@ def create_workspace_for_binary(binary_source_path: str) -> str:
     workspace_path = os.path.join(config.WORKSPACE_ROOT, binary_hash)
     os.makedirs(workspace_path, exist_ok=True)
     # Create decompiled directory if it doesn't exist
-    decompiled_path = os.path.join(workspace_path, config.DECOMPILED_FOLDER_NAME)
+    decompiled_path = os.path.join(
+        workspace_path, config.DECOMPILED_FOLDER_NAME)
     os.makedirs(decompiled_path, exist_ok=True)
     # Copy the binary into the workspace
     binary_filename = os.path.basename(binary_source_path)
@@ -66,12 +72,14 @@ def create_workspace_for_binary(binary_source_path: str) -> str:
         shutil.copy2(binary_source_path, workspace_binary_path)
     return workspace_path
 
+
 def compile(target: str, c_code_path: str, binary_path: str):
     # TODO: Fix this to put the source code in the workspace
     run_command_in_docker(
         f"gcc -o /{binary_path} /{c_code_path} -lm"
     )
-        
+
+
 def objdump(args: str) -> str:
     """
     Runs the objdump command with the specified arguments and returns its output.
@@ -80,44 +88,48 @@ def objdump(args: str) -> str:
     Returns:
         str: The output from the objdump command.
     """
-    
+
     try:
         result = run_command_in_docker(
             f"objdump {args}"
         )
     except subprocess.CalledProcessError as e:
         print(f"Error running objdump: {e.stderr}")
-    
+
     return result.stdout
 
-def disassemble_binary(binary_path, function_name=None, target_platform: str="linux"):
-    asm = run_command_in_docker(f"cd {os.path.dirname(binary_path)} && objdump -ds {os.path.basename(binary_path)}")
-    
+
+def disassemble_binary(binary_path, function_name=None, target_platform: str = "linux"):
+    asm = run_command_in_docker(
+        f"cd {os.path.dirname(binary_path)} && objdump -ds {os.path.basename(binary_path)}")
+
     if function_name is None:
         return asm.stdout
     else:
         return disassemble_function(asm.stdout, function_name)
 
+
 def disassemble_section(binary_path, section_name):
     input_asm = disassemble_binary(binary_path)
-    
+
     pattern = rf"Disassembly of section {re.escape(section_name)}:\n(.*?)(?=\nDisassembly of|$)"
-    
+
     # Use re.DOTALL to match across multiple lines
     match = re.search(pattern, input_asm, re.DOTALL)
-    
+
     # Return the matched content if found
     if match:
         return match.group(1).strip()
     else:
         return None
 
+
 def disassemble_function(binary_path, function_name):
     input_asm = disassemble_binary(binary_path)
-    
+
     # Split the disassembled output into blocks separated by double newlines
     blocks = input_asm.split('\n\n')
-    
+
     # Look for a block whose first line ends with the function marker
     for block in blocks:
         lines = block.splitlines()
@@ -126,12 +138,13 @@ def disassemble_function(binary_path, function_name):
         first_line = lines[0]
         if first_line.rstrip().endswith(f"<{function_name}>:"):
             return block
-    
+
     raise ValueError(f"Function {function_name} not found in the assembly.")
+
 
 def compile_and_disassemble_c_code(c_code_path, function_name, target_platform):
     binary_path = os.path.join(config.WORKSPACE_ROOT, "compiled_binary")
-    
+
     if target_platform == "mac":
         function_name = "_" + function_name
 
@@ -140,30 +153,34 @@ def compile_and_disassemble_c_code(c_code_path, function_name, target_platform):
 
     # Disassemble the binary
     input_asm = disassemble_binary(binary_path, function_name, target_platform)
-    
+
     return input_asm
+
 
 def disassemble(input_path, function_name):
     # If the workspace directory does not exist, create it
     if not os.path.exists(config.WORKSPACE_ROOT):
         os.makedirs(config.WORKSPACE_ROOT)
-    
+
     # Copy the C code or binary to the workspace for reference
     input_basename = os.path.basename(input_path)
     workspace_input_path = os.path.join(config.WORKSPACE_ROOT, input_basename)
     if not os.path.exists(workspace_input_path):
         os.system(f"cp {input_path} {workspace_input_path}")
-        
+
     target_platform = "linux"
-    
+
     if input_path.endswith(".c"):
         print("Input detected as C code. Compiling and disassembling...")
-        disassembled_code = compile_and_disassemble_c_code(input_path, function_name, target_platform)
+        disassembled_code = compile_and_disassemble_c_code(
+            input_path, function_name, target_platform)
     else:
         print("Input detected as binary. Disassembling...")
-        disassembled_code = disassemble_binary(input_path, function_name, target_platform)
-    
+        disassembled_code = disassemble_binary(
+            input_path, function_name, target_platform)
+
     return disassembled_code
+
 
 def summarize_assembly(objdump_output=None, binary_path=None):
     """
@@ -175,7 +192,8 @@ def summarize_assembly(objdump_output=None, binary_path=None):
         dict: A summary containing architecture, start address, sections, functions, and more.
     """
     if binary_path:
-        objdump_output = objdump(f"-dstrx {binary_path}")  # Assume objdump is defined elsewhere
+        # Assume objdump is defined elsewhere
+        objdump_output = objdump(f"-dstrx {binary_path}")
 
     if not objdump_output:
         return {"error": "No objdump output or binary path provided."}
@@ -184,9 +202,11 @@ def summarize_assembly(objdump_output=None, binary_path=None):
 
     # Extract architecture and start address
     arch_match = re.search(r"architecture:\s+([^\n,]+)", objdump_output)
-    start_addr_match = re.search(r"start address\s+(0x[0-9a-fA-F]+)", objdump_output)
+    start_addr_match = re.search(
+        r"start address\s+(0x[0-9a-fA-F]+)", objdump_output)
     summary["architecture"] = arch_match.group(1) if arch_match else "Unknown"
-    summary["start_address"] = start_addr_match.group(1) if start_addr_match else "Unknown"
+    summary["start_address"] = start_addr_match.group(
+        1) if start_addr_match else "Unknown"
 
     # Extract program headers
     program_headers = re.findall(
@@ -209,10 +229,13 @@ def summarize_assembly(objdump_output=None, binary_path=None):
     ]
 
     # Extract dynamic section
-    dynamic_section_match = re.search(r"Dynamic Section:(.*?)Version References:", objdump_output, re.S)
+    dynamic_section_match = re.search(
+        r"Dynamic Section:(.*?)Version References:", objdump_output, re.S)
     if dynamic_section_match:
-        dynamic_entries = re.findall(r"([A-Z_]+)\s+(0x[0-9a-f]+|.+)", dynamic_section_match.group(1))
-        summary["dynamic_section"] = {entry[0]: entry[1] for entry in dynamic_entries}
+        dynamic_entries = re.findall(
+            r"([A-Z_]+)\s+(0x[0-9a-f]+|.+)", dynamic_section_match.group(1))
+        summary["dynamic_section"] = {entry[0]: entry[1]
+                                      for entry in dynamic_entries}
 
     # Extract sections and their properties
     sections = re.findall(
@@ -234,13 +257,14 @@ def summarize_assembly(objdump_output=None, binary_path=None):
     ]
 
     # Extract symbol table
-    symbol_table_match = re.search(r"SYMBOL TABLE:(.*?)Contents of section", objdump_output, re.S)
+    symbol_table_match = re.search(
+        r"SYMBOL TABLE:(.*?)Contents of section", objdump_output, re.S)
     if symbol_table_match:
         # symbols = re.findall(
         #     r"([0-9a-f]+)\s+\w\s+([\.\w]+)\s+([0-9a-f]+)\s+(.*)", symbol_table_match.group(1)
         # )
         symbols = re.findall(
-            r"([0-9a-f]{8})\s[\w\s]{7}\s([\.\w]+|\*ABS\*|\*UND\*)\s+([0-9a-f]+)\s+(.*)", 
+            r"([0-9a-f]{8})\s[\w\s]{7}\s([\.\w]+|\*ABS\*|\*UND\*)\s+([0-9a-f]+)\s+(.*)",
             symbol_table_match.group(1)
         )
         summary["symbol_table"] = [
@@ -259,11 +283,12 @@ def summarize_assembly(objdump_output=None, binary_path=None):
 
     return summary
 
+
 if __name__ == "__main__":
     pp = pprint.PrettyPrinter(indent=2)
-    
+
     # print(objdump("-sdxtr decompile_workspace/uploaded_binary.bin"))
-    
+
     # pp.pprint(summarize_assembly(binary_path="decompile_workspace/uploaded_binary.bin"))
-    
+
     print(disassemble_section("decompile_workspace/uploaded_binary.bin", ".init"))
