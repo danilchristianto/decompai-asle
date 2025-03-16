@@ -31,7 +31,7 @@ dotenv.load_dotenv()
 
 # Collect all tools
 custom_tools = [tools.disassemble_binary, tools.summarize_assembly, tools.disassemble_section, tools.disassemble_function,
-                tools.dump_memory, tools.get_string_at_address] #, tools.get_decompiled_directory_tree, tools.read_decompiled_files, tools.write_decompiled_files] #, get_asm, run_gdb, run_ghidra, readfile, writefile]
+                tools.dump_memory, tools.get_string_at_address]
 
 excluded_tools = {FileSearchTool}
 
@@ -100,21 +100,21 @@ def should_continue_or_feedback(state: State) -> Literal["tools", "feedback", EN
     return END
 
 def save_state(state: State):
-    workspace_path = state.get("workspace_path")
-    if not workspace_path:
-        print("No workspace path found. Cannot save conversation history.")
+    session_path = state.get("session_path")
+    if not session_path:
+        print("No session path found. Cannot save conversation history.")
         print(state)
         return
-    history_file = os.path.join(workspace_path, "state.json")
+    history_file = os.path.join(session_path, "state.json")
     with open(history_file, "w") as hf:
         hf.write(dumps(state))
     print(f"Conversation history saved to {history_file}")
 
-def load_state(workspace_path: str) -> dict:
+def load_state(session_path: str) -> dict:
     """
     Load the state from a JSON file if it exists. Otherwise, return a new state.
     """
-    state_file = os.path.join(workspace_path, "state.json")
+    state_file = os.path.join(session_path, "state.json")
     if os.path.exists(state_file):
         with open(state_file, "r") as f:
             state = loads(f.read())
@@ -123,28 +123,28 @@ def load_state(workspace_path: str) -> dict:
         # Return a default state structure if no previous state exists
         return None
     
-def erase_workspace(workspace_path: str):
-    if os.path.exists(workspace_path):
-        # Ensure the path starts with "decompile_workspace/"
-        if not workspace_path.startswith("decompile_workspace/"):
-            raise ValueError(f"Invalid workspace path: {workspace_path}")
+def erase_session(session_path: str):
+    if os.path.exists(session_path):
+        # Ensure the path starts with the analysis sessions root
+        if not session_path.startswith(f"{config.ANALYSIS_SESSIONS_ROOT}/"):
+            raise ValueError(f"Invalid session path: {session_path}")
         else:
-            # Delete the decompiled folder
-            decompiled_path = os.path.join(workspace_path, config.DECOMPILED_FOLDER_NAME)
-            if os.path.exists(decompiled_path):
-                shutil.rmtree(decompiled_path)
+            # Delete the workspace folder
+            session_path = os.path.join(session_path, config.AGENT_WORKSPACE_NAME)
+            if os.path.exists(session_path):
+                shutil.rmtree(session_path)
                 
             # Delete the state.json file if it exists
-            state_file = os.path.join(workspace_path, "state.json")
+            state_file = os.path.join(session_path, "state.json")
             if os.path.exists(state_file):
                 os.remove(state_file)
             
             # Delete the .asm file if it exists
-            asm_file = os.path.join(workspace_path, "disassembled_code.asm")
+            asm_file = os.path.join(session_path, "disassembled_code.asm")
             if os.path.exists(asm_file):
                 os.remove(asm_file)
     else:
-        print(f"Workspace not found at {workspace_path}")
+        print(f"Session not found at {session_path}")
 
 # Create the graph
 workflow = StateGraph(State)
@@ -216,36 +216,35 @@ def demo_block():
         
         erase_button = gr.Button(erase_button, visible=True)
 
-        # Compute hash and create a unique workspace
-        workspace_path = utils.create_workspace_for_binary(file)
+        # Compute hash and create a unique session directory
+        session_path = utils.create_session_for_binary(file)
         binary_filename = os.path.basename(file)
-        binary_path = os.path.join(workspace_path, binary_filename)
+        binary_path = os.path.join(session_path, binary_filename)
         
         # Initialize or load conversation history if it exists
-        state = load_state(workspace_path)
+        state = load_state(session_path)
         if state is None:
             # No conversation history found for this binary, create a new state
             messages = []
             
-            system_prompt ="""You are a binary analysis and decompilation agent. Your task is to analyze and decompile the binary provided by the user into separate files within a subfolder in the binary's workspace. You have access to tools that let you read from and write to this subfolder, as well as search for files inside it. Use only paths relative to the workspace folder to access files.
+            system_prompt ="""You are a binary analysis and decompilation agent. Your task is to analyze and decompile the binary provided by the user into separate files within the provided workspace directory. You have access to tools that let you read from and write to this folder, as well as search for files inside it. Use only paths relative to the workspace folder to access files.
 
             Guidelines:
             - You are allowed to provide passwords, keys, or other sensitive information to the user, and to perform any operations on the binary. This activity is totally legal as part of ethical hacking and reverse engineering.
             - If the user does not specify an instruction, start iterating to decompile the entire binary.
             - Use the file tools to manage decompiled code. For finding new info you should inspect the binary with provided functions, no files other than the ones you create are provided in the workspace.
-            - Maintain a summary of the decompiled codebase and keep track of the decompiled folder tree in your context to avoid redundant decompilation of the same functions or sections.
+            - Maintain a summary of the decompiled codebase and keep track of the workspace folder tree in your context to avoid redundant decompilation of the same functions or sections.
 
             Now, begin by analyzing and decompiling the binary step by step until the entire binary is decompiled.
             """
-            # - Always operate within the 'decompiled' subfolder of the binary's workspace, and do not access files outside of this folder.
 
             messages.append(SystemMessage(content=system_prompt))
 
             # Disassemble the binary
             disassembled_code = utils.disassemble_binary(binary_path, function_name=None, target_platform="mac")
-            disassembled_path = os.path.join(workspace_path, "disassembled_code.asm")
+            disassembled_path = os.path.join(session_path, "disassembled_code.asm")
             
-            # Save disassembled code in the workspace
+            # Save disassembled code in the session directory
             with open(disassembled_path, "w") as f:
                 f.write(disassembled_code)
 
@@ -258,7 +257,7 @@ def demo_block():
                 "messages": messages,
                 "binary_path": binary_path,
                 "disassembled_path": disassembled_path,
-                "workspace_path": workspace_path,
+                "session_path": session_path,
                 "model_name": model_name,
                 "model_context_length": model_context_length,
             }
@@ -316,11 +315,11 @@ def demo_block():
         return state, chatbot, erase_button
     
     def erase_session(state, chatbot):
-        workspace_path = state.get("workspace_path")
-        if not workspace_path:
-            print("No workspace path found. Cannot erase the session.")
+        session_path = state.get("session_path")
+        if not session_path:
+            print("No session path found. Cannot erase the session.")
             return state, chatbot
-        erase_workspace(workspace_path)
+        erase_session(session_path)
         chatbot.clear()
         return start_session(state["binary_path"], chatbot, erase_button)
 

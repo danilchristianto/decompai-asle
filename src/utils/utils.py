@@ -9,7 +9,7 @@ import json
 
 import src.config as config
 
-os.makedirs(config.WORKSPACE_ROOT, exist_ok=True)
+os.makedirs(config.ANALYSIS_SESSIONS_ROOT, exist_ok=True)
 
 DOCKER_IMAGE = "decompai_runner"
 
@@ -39,7 +39,7 @@ def run_command_in_docker(command: str) -> str:
 
     docker_run_command = (
         f"docker run --rm --name {container_name} "
-        f"-v ./decompile_workspace:/decompile_workspace "
+        f"-v ./{config.ANALYSIS_SESSIONS_ROOT}:/{config.ANALYSIS_SESSIONS_ROOT} "
         f"-v ./binaries:/binaries "
         f"-v ./source_code:/source_code "
         f"--platform linux/amd64 -w / {DOCKER_IMAGE} "
@@ -58,26 +58,26 @@ def hash_file(filepath: str) -> str:
     return hasher.hexdigest()
 
 
-def create_workspace_for_binary(binary_source_path: str) -> str:
+def create_session_for_binary(binary_source_path: str) -> str:
     # Compute the hash for the binary
     binary_hash = hash_file(binary_source_path)
-    # Create workspace directory if it doesn't exist
-    workspace_path = os.path.join(config.WORKSPACE_ROOT, binary_hash)
-    os.makedirs(workspace_path, exist_ok=True)
-    # Create decompiled directory if it doesn't exist
-    decompiled_path = os.path.join(
-        workspace_path, config.DECOMPILED_FOLDER_NAME)
-    os.makedirs(decompiled_path, exist_ok=True)
-    # Copy the binary into the workspace
+    # Create session directory if it doesn't exist
+    session_path = os.path.join(config.ANALYSIS_SESSIONS_ROOT, binary_hash)
+    os.makedirs(session_path, exist_ok=True)
+    # Create agent workspace directory if it doesn't exist
+    agent_workspace_path = os.path.join(
+        session_path, config.AGENT_WORKSPACE_NAME)
+    os.makedirs(agent_workspace_path, exist_ok=True)
+    # Copy the binary into the session directory
     binary_filename = os.path.basename(binary_source_path)
-    workspace_binary_path = os.path.join(workspace_path, binary_filename)
-    if binary_source_path != workspace_binary_path:
-        shutil.copy2(binary_source_path, workspace_binary_path)
-    return workspace_path
+    session_binary_path = os.path.join(session_path, binary_filename)
+    if binary_source_path != session_binary_path:
+        shutil.copy2(binary_source_path, session_binary_path)
+    return session_path
 
 
 def compile(target: str, c_code_path: str, binary_path: str):
-    # TODO: Fix this to put the source code in the workspace
+    # TODO: Fix this to put the source code in the session directory
     run_command_in_docker(
         f"gcc -o /{binary_path} /{c_code_path} -lm"
     )
@@ -146,7 +146,7 @@ def disassemble_function(binary_path, function_name):
 
 
 def compile_and_disassemble_c_code(c_code_path, function_name, target_platform):
-    binary_path = os.path.join(config.WORKSPACE_ROOT, "compiled_binary")
+    binary_path = os.path.join(config.ANALYSIS_SESSIONS_ROOT, "compiled_binary")
 
     if target_platform == "mac":
         function_name = "_" + function_name
@@ -161,13 +161,13 @@ def compile_and_disassemble_c_code(c_code_path, function_name, target_platform):
 
 
 def disassemble(input_path, function_name):
-    # If the workspace directory does not exist, create it
-    if not os.path.exists(config.WORKSPACE_ROOT):
-        os.makedirs(config.WORKSPACE_ROOT)
+    # If the root sessions directory does not exist, create it
+    if not os.path.exists(config.ANALYSIS_SESSIONS_ROOT):
+        os.makedirs(config.ANALYSIS_SESSIONS_ROOT)
 
     # Copy the C code or binary to the workspace for reference
     input_basename = os.path.basename(input_path)
-    workspace_input_path = os.path.join(config.WORKSPACE_ROOT, input_basename)
+    workspace_input_path = os.path.join(config.ANALYSIS_SESSIONS_ROOT, input_basename)
     if not os.path.exists(workspace_input_path):
         os.system(f"cp {input_path} {workspace_input_path}")
 
@@ -313,8 +313,8 @@ def get_string_at_address(binary_path: str, address: int) -> str:
 if __name__ == "__main__":
     pp = pprint.PrettyPrinter(indent=2)
 
-    # print(objdump("-sdxtr decompile_workspace/uploaded_binary.bin"))
+    # print(objdump("-sdxtr binary_workspaces/uploaded_binary.bin"))
 
-    # pp.pprint(summarize_assembly(binary_path="decompile_workspace/uploaded_binary.bin"))
+    # pp.pprint(summarize_assembly(binary_path="binary_workspaces/uploaded_binary.bin"))
 
-    print(disassemble_section("decompile_workspace/uploaded_binary.bin", ".init"))
+    print(disassemble_section("binary_workspaces/uploaded_binary.bin", ".init"))

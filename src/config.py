@@ -1,2 +1,2 @@
-WORKSPACE_ROOT="decompile_workspace"
-DECOMPILED_FOLDER_NAME = "decompiled"
+ANALYSIS_SESSIONS_ROOT="analysis_sessions"
+AGENT_WORKSPACE_NAME = "agent_workspace"

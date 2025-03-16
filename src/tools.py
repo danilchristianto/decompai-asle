@@ -22,14 +22,14 @@ from src.utils import disassemble_function
 from src.state import State
 
 
-def get_decompiled_folder_path(state: State) -> str:
-    """Ensure the decompiled folder exists and return its path."""
-    workspace = state.get("workspace_path")
-    if not workspace:
+def get_agent_workspace_path(state: State) -> str:
+    """Ensure the workspace folder exists and return its path."""
+    session_path = state.get("session_path")
+    if not session_path:
         raise ValueError("Workspace path not set in state.")
-    decompiled_path = os.path.join(workspace, config.DECOMPILED_FOLDER_NAME)
-    os.makedirs(decompiled_path, exist_ok=True)
-    return decompiled_path
+    agent_workspace_path = os.path.join(session_path, config.AGENT_WORKSPACE_NAME)
+    os.makedirs(agent_workspace_path, exist_ok=True)
+    return agent_workspace_path
 
 
 def create_tool_function(cls: Type) -> Callable:
@@ -51,9 +51,9 @@ def create_tool_function(cls: Type) -> Callable:
         state: Annotated[Any, InjectedState],
         **kwargs: Any
     ) -> Any:
-        workspace_path = state["workspace_path"]
+        session_path = state["session_path"]
         instance = cls(root_dir=os.path.join(
-            workspace_path, config.DECOMPILED_FOLDER_NAME))
+            session_path, config.AGENT_WORKSPACE_NAME))
         return instance._run(**kwargs)
 
     # Set the function's name and docstring before decoration
@@ -70,14 +70,14 @@ def create_tool_function(cls: Type) -> Callable:
 
 
 @tool
-def get_decompiled_directory_tree(
+def get_agent_workspace_directory_tree(
     state: Annotated[State, InjectedState]
 ) -> str:
-    """Return a JSON-formatted tree of files in the decompiled subfolder."""
-    decompiled_path = get_decompiled_folder_path(state)
+    """Return a JSON-formatted tree of files in the agent workspace subfolder."""
+    agent_workspace_path = get_agent_workspace_path(state)
     tree = {}
-    for root, dirs, files in os.walk(decompiled_path):
-        rel_root = os.path.relpath(root, decompiled_path)
+    for root, dirs, files in os.walk(agent_workspace_path):
+        rel_root = os.path.relpath(root, agent_workspace_path)
         tree[rel_root] = files
     return json.dumps(tree, indent=2)
 

@@ -7,6 +7,6 @@ class MessagesState(TypedDict):
 class State(MessagesState):
     binary_path: str
     disassembled_path: str | None
-    workspace_path: str | None
+    session_path: str | None
     model_name: str | None
     model_context_length: int | None
