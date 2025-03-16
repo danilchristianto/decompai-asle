@@ -30,9 +30,12 @@ from src.state import State
 dotenv.load_dotenv()
 
 # Collect all tools
-custom_tools = [tools.disassemble_binary, tools.summarize_assembly, tools.disassemble_section, tools.disassemble_function] #, tools.get_decompiled_directory_tree, tools.read_decompiled_files, tools.write_decompiled_files] #, get_asm, run_gdb, run_ghidra, readfile, writefile]
-# file_management_tools = [tools.write_file] # FileManagementToolkit(root_dir=config.WORKSPACE_ROOT+"/decompiled").get_tools()]
-file_management_tools = [tools.create_tool_function(tool) for tool in file_management_toolkit._FILE_TOOLS]
+custom_tools = [tools.disassemble_binary, tools.summarize_assembly, tools.disassemble_section, tools.disassemble_function,
+                tools.dump_memory, tools.get_string_at_address] #, tools.get_decompiled_directory_tree, tools.read_decompiled_files, tools.write_decompiled_files] #, get_asm, run_gdb, run_ghidra, readfile, writefile]
+
+excluded_tools = {FileSearchTool}
+
+file_management_tools = [tools.create_tool_function(t) for t in file_management_toolkit._FILE_TOOLS if t not in excluded_tools]
 
 all_tools = custom_tools + file_management_tools
 
@@ -61,6 +64,10 @@ async def call_model(state: State, config: RunnableConfig):
         try:
             response = await model.ainvoke(messages, config)
             print(f"Model response: {response}")
+            
+            if response.content == "":
+                response.content = " "
+            
             state["messages"] = response
             return state
         except openai.RateLimitError as e:
@@ -323,7 +330,7 @@ def demo_block():
 
         config = {
             "configurable": {"thread_id": user_id},
-            "recursion_limit": 50
+            "recursion_limit": 500
             }
 
         if state is None:

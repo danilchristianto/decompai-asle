@@ -5,12 +5,13 @@ import re
 import pprint
 import hashlib
 import shutil
+import json
 
 import src.config as config
 
 os.makedirs(config.WORKSPACE_ROOT, exist_ok=True)
 
-DOCKER_IMAGE = "gcc_linux_x86_64:latest"
+DOCKER_IMAGE = "decompai_runner"
 
 image_built = False
 
@@ -20,7 +21,7 @@ def build_docker_image():
     if image_built:
         return
     docker_build_command = (
-        f"docker buildx build --platform linux/amd64 "
+        f"docker buildx build --platform linux/amd64 -f Dockerfile "
         f"-t {DOCKER_IMAGE} . --load"
     )
     subprocess.run(docker_build_command, shell=True, check=True)
@@ -34,13 +35,15 @@ def run_command_in_docker(command: str) -> str:
 
     # {os.getcwd()}
 
+    command = command.replace('"', '\\"')
+
     docker_run_command = (
         f"docker run --rm --name {container_name} "
         f"-v ./decompile_workspace:/decompile_workspace "
         f"-v ./binaries:/binaries "
         f"-v ./source_code:/source_code "
         f"--platform linux/amd64 -w / {DOCKER_IMAGE} "
-        f"/bin/sh -c '{command}'"
+        f"/bin/sh -c \"{command}\""
     )
     result = subprocess.run(docker_run_command, shell=True,
                             capture_output=True, text=True, check=True)
@@ -257,19 +260,19 @@ def summarize_assembly(objdump_output=None, binary_path=None):
     ]
 
     # Extract symbol table
-    symbol_table_match = re.search(
-        r"SYMBOL TABLE:(.*?)Contents of section", objdump_output, re.S)
-    if symbol_table_match:
-        # symbols = re.findall(
-        #     r"([0-9a-f]+)\s+\w\s+([\.\w]+)\s+([0-9a-f]+)\s+(.*)", symbol_table_match.group(1)
-        # )
-        symbols = re.findall(
-            r"([0-9a-f]{8})\s[\w\s]{7}\s([\.\w]+|\*ABS\*|\*UND\*)\s+([0-9a-f]+)\s+(.*)",
-            symbol_table_match.group(1)
-        )
-        summary["symbol_table"] = [
-            {"address": sym[0], "section": sym[1], "size": sym[2], "name": sym[3]} for sym in symbols
-        ]
+    # symbol_table_match = re.search(
+    #     r"SYMBOL TABLE:(.*?)Contents of section", objdump_output, re.S)
+    # if symbol_table_match:
+    #     # symbols = re.findall(
+    #     #     r"([0-9a-f]+)\s+\w\s+([\.\w]+)\s+([0-9a-f]+)\s+(.*)", symbol_table_match.group(1)
+    #     # )
+    #     symbols = re.findall(
+    #         r"([0-9a-f]{8})\s[\w\s]{7}\s([\.\w]+|\*ABS\*|\*UND\*)\s+([0-9a-f]+)\s+(.*)",
+    #         symbol_table_match.group(1)
+    #     )
+    #     summary["symbol_table"] = [
+    #         {"address": sym[0], "section": sym[1], "size": sym[2], "name": sym[3]} for sym in symbols
+    #     ]
 
     # # Extract disassembled functions
     # disassembly = {}
@@ -282,6 +285,29 @@ def summarize_assembly(objdump_output=None, binary_path=None):
     # summary["disassembly"] = disassembly
 
     return summary
+
+
+def dump_memory(binary_path: str, address: int, length: int) -> bytes:
+    """
+    Uses radare2 to dump a specified number of bytes from the binary at a given virtual address.
+    The command 'pxj' outputs a JSON array of byte values.
+    """
+    cmd = f"r2 -qc 'pxj {length} @ {hex(address)}; quit' ./{binary_path}"
+    result = run_command_in_docker(cmd)
+    try:
+        data = json.loads(result.stdout)
+        return bytes(data)
+    except Exception as e:
+        return b""
+
+
+def get_string_at_address(binary_path: str, address: int) -> str:
+    """
+    Uses radare2 to retrieve a null-terminated string from the binary at a given virtual address.
+    """
+    cmd = f"r2 -qc 'psz @ {hex(address)}; quit' {binary_path}"
+    result = run_command_in_docker(cmd)
+    return result.stdout.strip()
 
 
 if __name__ == "__main__":

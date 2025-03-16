@@ -132,3 +132,35 @@ def disassemble_function(
         raise ValueError("Disassembly too long for model context length.")
 
     return f"Disassembly of function {function_name}:\n\n{assembly_code}"
+
+
+@tool
+def dump_memory(
+    address: str,
+    length: int,
+    state: Annotated[State, InjectedState]
+) -> str:
+    """
+    Reads a specified number of bytes from the binary at a given address.
+    Returns the dumped bytes as a hex string.
+    """
+    if address.startswith("0x"):
+        address = address[2:]
+    address = int(address, 16)
+
+    data = utils.dump_memory(state["binary_path"], address, length)
+    return data.hex()
+
+
+@tool
+def get_string_at_address(
+    address: str,
+    state: Annotated[State, InjectedState]
+) -> str:
+    """
+    Reads a null-terminated string from the binary starting at the given address.
+    """
+    if address.startswith("0x"):
+        address = address[2:]
+    address = int(address, 16)
+    return utils.get_string_at_address(state["binary_path"], address)
