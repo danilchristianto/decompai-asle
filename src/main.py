@@ -2,8 +2,9 @@ import os
 import uuid
 import json
 import gradio as gr
+from gradio import ChatMessage
 from typing_extensions import Literal, Annotated
-from langchain_core.messages import HumanMessage, SystemMessage, BaseMessage, AIMessage, ToolMessage, AIMessageChunk
+from langchain_core.messages import HumanMessage, SystemMessage, BaseMessage, AIMessage, ToolMessage, AIMessageChunk, ToolMessageChunk, ToolCall
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
 from langchain.load.dump import dumps
@@ -17,24 +18,26 @@ from langgraph.prebuilt import InjectedState, InjectedStore
 from langchain_community.agent_toolkits import FileManagementToolkit
 import langchain_community.agent_toolkits.file_management.toolkit as file_management_toolkit
 from langchain_community.tools import CopyFileTool, DeleteFileTool, FileSearchTool, MoveFileTool, ReadFileTool, WriteFileTool, ListDirectoryTool
+from langchain_community.tools import ShellTool
 import tiktoken
 import asyncio
 import shutil
 import dotenv
+import logging
 
 import src.config as config
 import src.utils as utils
 import src.tools as tools
+from src.tools.sandboxed_shell import SandboxedShellTool
 from src.state import State
 
 dotenv.load_dotenv()
 
 # Collect all tools
 custom_tools = [tools.disassemble_binary, tools.summarize_assembly, tools.disassemble_section, tools.disassemble_function,
-                tools.dump_memory, tools.get_string_at_address]
+                tools.dump_memory, tools.get_string_at_address, tools.CustomSandboxedShellTool().as_tool()]
 
 excluded_tools = {FileSearchTool}
-
 file_management_tools = [tools.create_tool_function(t) for t in file_management_toolkit._FILE_TOOLS if t not in excluded_tools]
 
 all_tools = custom_tools + file_management_tools
@@ -130,9 +133,9 @@ def erase_session(session_path: str):
             raise ValueError(f"Invalid session path: {session_path}")
         else:
             # Delete the workspace folder
-            session_path = os.path.join(session_path, config.AGENT_WORKSPACE_NAME)
-            if os.path.exists(session_path):
-                shutil.rmtree(session_path)
+            agent_workspace_path = os.path.join(session_path, config.AGENT_WORKSPACE_NAME)
+            if os.path.exists(agent_workspace_path):
+                shutil.rmtree(agent_workspace_path)
                 
             # Delete the state.json file if it exists
             state_file = os.path.join(session_path, "state.json")
@@ -262,7 +265,7 @@ def demo_block():
                 "model_context_length": model_context_length,
             }
         
-            if num_tokens <= model_context_length // 2: # Half of the token limit
+            if num_tokens <= model_context_length // 200: # Half of the token limit
                 # Add the disassembled code to the message history
                 
                 tool_call_message = AIMessage(
@@ -277,9 +280,10 @@ def demo_block():
                     ],
                 )
                 messages.append(tool_call_message)
+                messages.extend(tool_node.invoke(state)["messages"])
                 
-                disassembled_msg = ToolMessage(content=f"Disassembly of binary:\n\n{disassembled_code}", tool_call_id=tool_call_message.tool_calls[0]["id"])
-                messages.append(disassembled_msg)
+                # disassembled_msg = ToolMessage(content=f"Disassembly of binary:\n\n{disassembled_code}", tool_call_id=tool_call_message.tool_calls[0]["id"])
+                # messages.append(disassembled_msg)
             else:
                 tool_call_message = AIMessage(
                     content="The binary is too large to fit the full disassembly in the chat. I will summarize the assembly code instead.",
@@ -307,14 +311,23 @@ def demo_block():
                 chatbot.append({"role": "user", "content": msg.content})
             elif isinstance(msg, AIMessage):
                 chatbot.append({"role": "assistant", "content": msg.content})
+                
+                if msg.tool_calls:
+                    for tool_call in msg.tool_calls:
+                        tool_call: ToolCall
+                        chatbot.append(ChatMessage(role="assistant", content=(str(tool_call.get("args"))), metadata={"title": f'🛠️ Calling tool {tool_call.get("name")}', "id": tool_call.get("id")}))
+                    
             # elif isinstance(msg, SystemMessage):
             #     chatbot.append({"role": "assistant", "content": msg.content})
-            # elif isinstance(msg, ToolMessage):
-            #     chatbot.append({"role": "assistant", "content": msg.content, "tool_call_id": msg.tool_call_id})
+            elif isinstance(msg, ToolMessage):
+                msg: ToolMessage
+                # chatbot.append({"role": "assistant", "content": msg.content, "tool_call_id": msg.tool_call_id})
+                tool_name_str = f' {msg.name}' if msg.name else ''
+                chatbot.append(gr.ChatMessage(role="assistant", content=msg.content, metadata={"title": f'Response from tool{tool_name_str}', "parent_id": msg.tool_call_id}))
         
         return state, chatbot, erase_button
     
-    def erase_session(state, chatbot):
+    def erase_gradio_session(state, chatbot):
         session_path = state.get("session_path")
         if not session_path:
             print("No session path found. Cannot erase the session.")
@@ -348,6 +361,7 @@ def demo_block():
         })
         
         first = True
+        last_message_type = None
         async for tuple in graph.astream(state, config=config, stream_mode=["messages", "values"]):
             
             stream_mode, data = tuple
@@ -360,18 +374,43 @@ def demo_block():
                 #     print(msg.content, end="|", flush=True)
 
                 if isinstance(msg, AIMessageChunk):
-                    if first:
-                        gathered = msg
-                        first = False
+                    msg: AIMessageChunk
+                    if last_message_type is not AIMessageChunk:
+                        last_message_type = AIMessageChunk
                         history.append({
                             "role": "assistant",
-                            "content": gathered.content
+                            "content": msg.content
                         })
                     else:
-                        gathered = gathered + msg
                         history[-1]["content"] += msg.content
-
+                        
+                    if msg.tool_calls:
+                        for tool_call in msg.tool_calls:
+                            tool_call: ToolCall
+                            history.append(ChatMessage(role="assistant", content=str(tool_call.get("args")), metadata={"title": f'🛠️ Calling tool {tool_call.get("name")}', "id": tool_call.get("id")}))
+                        last_message_type = ToolCall
+                    if msg.tool_call_chunks:
+                        pass
+                        # TODO: Handle tool call chunks
+                    
                     yield history, state, user_id, gr.Textbox(value="", interactive=False)
+                elif isinstance(msg, ToolMessageChunk):
+                    msg: ToolMessageChunk
+                    if msg.name is None:
+                        print(f"Name is None ToolMessageChunk: {msg}")
+                    if last_message_type is not ToolMessageChunk:
+                        last_message_type = ToolMessageChunk
+                        tool_name_str = f' {msg.name}' if msg.name else ''
+                        history.append(ChatMessage(role="assistant", content=msg.content, metadata={"title": f'Response from tool{tool_name_str}', "parent_id": msg.tool_call_id}))
+                    else:
+                        history[-1].content += msg.content
+                elif isinstance(msg, ToolMessage):
+                    msg: ToolMessage
+                    if msg.name is None:
+                        print(f"Name is None ToolMessage: {msg}")
+                    tool_name_str = f' {msg.name}' if msg.name else ''
+                    history.append(ChatMessage(role="assistant", content=msg.content, metadata={"title": f'Response from tool{tool_name_str}', "parent_id": msg.tool_call_id}))
+                    last_message_type = ToolMessage
         else:
             save_state(state)
         yield history, state, user_id, gr.Textbox(value="", interactive=True)
@@ -391,7 +430,7 @@ def demo_block():
     
     # Link the erase_button to the erase_history function
     erase_button.click(
-        erase_session,
+        erase_gradio_session,
         inputs=[gradio_state, chatbot],
         outputs=[gradio_state, chatbot]
     )

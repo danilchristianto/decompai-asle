@@ -11,7 +11,7 @@ import src.config as config
 
 os.makedirs(config.ANALYSIS_SESSIONS_ROOT, exist_ok=True)
 
-DOCKER_IMAGE = "decompai_runner"
+DOCKER_IMAGE = "decompai-runner"
 
 image_built = False
 
@@ -31,15 +31,15 @@ def build_docker_image():
 def run_command_in_docker(command: str) -> str:
     build_docker_image()
 
-    container_name = "decompai_runner"
+    container_name = "decompai-runner"
 
     # {os.getcwd()}
 
-    command = command.replace('"', '\\"')
+    # command = command.replace('"', '\\"')
 
     docker_run_command = (
         f"docker run --rm --name {container_name} "
-        f"-v ./{config.ANALYSIS_SESSIONS_ROOT}:/{config.ANALYSIS_SESSIONS_ROOT} "
+        f"-v {config.ANALYSIS_SESSIONS_ROOT}:{config.ANALYSIS_SESSIONS_ROOT} "
         f"-v ./binaries:/binaries "
         f"-v ./source_code:/source_code "
         f"--platform linux/amd64 -w / {DOCKER_IMAGE} "
@@ -73,6 +73,9 @@ def create_session_for_binary(binary_source_path: str) -> str:
     session_binary_path = os.path.join(session_path, binary_filename)
     if binary_source_path != session_binary_path:
         shutil.copy2(binary_source_path, session_binary_path)
+    # Copy the binary into the agent workspace directory (for the agent to use without affecting the original binary)
+    agent_binary_path = os.path.join(agent_workspace_path, binary_filename)
+    shutil.copy2(binary_source_path, agent_binary_path)
     return session_path
 
 
@@ -292,7 +295,7 @@ def dump_memory(binary_path: str, address: int, length: int) -> bytes:
     Uses radare2 to dump a specified number of bytes from the binary at a given virtual address.
     The command 'pxj' outputs a JSON array of byte values.
     """
-    cmd = f"r2 -qc 'pxj {length} @ {hex(address)}; quit' ./{binary_path}"
+    cmd = f"r2 -qc 'pxj {length} @ {hex(address)}; quit' {binary_path}"
     result = run_command_in_docker(cmd)
     try:
         data = json.loads(result.stdout)
