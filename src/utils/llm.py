@@ -14,7 +14,9 @@ def get_context_length(
         return 128e3
     elif "gemini-2.0" in model:
         return 1e6
-
+    else:
+        return 128e3
+    
 def count_tokens(
     text: str,
     model_name: str | None = None

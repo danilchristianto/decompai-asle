@@ -31,7 +31,9 @@ import src.tools as tools
 from src.tools.sandboxed_shell import SandboxedShellTool
 from src.state import State
 
-dotenv.load_dotenv()
+dotenv.load_dotenv(override=True)
+
+logging.basicConfig(level=logging.INFO)
 
 # Collect all tools
 custom_tools = [tools.disassemble_binary, tools.summarize_assembly, tools.disassemble_section, tools.disassemble_function,
@@ -45,6 +47,8 @@ all_tools = custom_tools + file_management_tools
 tool_node = ToolNode(all_tools)
 
 model_name = os.getenv("LLM_MODEL", "gpt-4o-mini")
+
+logging.info(f"Model name: {model_name}")
 
 openai_base_url = None
 api_key = os.getenv("OPENAI_API_KEY")
@@ -60,7 +64,7 @@ model = ChatOpenAI(model=model_name, temperature=0, openai_api_key=api_key, stre
 # Define the function that calls the model
 async def call_model(state: State, config: RunnableConfig):
     messages = state['messages']
-    print(f"Messages: {messages}")
+    # print(f"Messages: {messages}")
     
     retries = 0
     while retries < 3:
@@ -188,18 +192,22 @@ def demo_block():
 
     memory = MemorySaver()
     
-    chatbot = gr.Chatbot(
-        show_copy_button=False,
-        show_share_button=True,
-        label="Binary Analysis Assistant",
-        elem_id="chatbot",
-        type="messages"
-    )
-    gradio_msg: gr.Textbox = gr.Textbox(
-        placeholder="Ask something about the binary...",
-        container=False,
-        scale=7
-    )
+    # chatbot = gr.Chatbot(
+    #     show_copy_button=True,
+    #     show_share_button=True,
+    #     label="Binary Analysis Assistant",
+    #     elem_id="chatbot",
+    #     type="messages",
+    #     show_copy_all_button=True,
+    # )
+    
+    # gradio_msg: gr.Textbox = gr.Textbox(
+    #     placeholder="Ask something about the binary...",
+    #     container=False,
+    #     scale=7,
+    #     submit_btn=True,
+    #     # stop_btn=True,
+    # )
     user_id = gr.State(None)
     gradio_state = gr.State(None)  # {"messages": [...BaseMessage...]}
     
@@ -213,7 +221,7 @@ def demo_block():
     
     erase_button = gr.Button("Erase Session", visible=False)
     
-    def start_session(file, chatbot: gr.Chatbot, erase_button: gr.Button):
+    def start_session(file, chatbot: list, erase_button: gr.Button):
         if file is None:
             return gr.update(visible=True), None, "Please upload a binary file."
         
@@ -265,7 +273,7 @@ def demo_block():
                 "model_context_length": model_context_length,
             }
         
-            if num_tokens <= model_context_length // 200: # Half of the token limit
+            if num_tokens <= model_context_length // 2: # Half of the token limit
                 # Add the disassembled code to the message history
                 
                 tool_call_message = AIMessage(
@@ -305,7 +313,6 @@ def demo_block():
         chatbot.clear()
             
         # Load messages into the chatbot
-        print(state["messages"])
         for msg in state["messages"]:
             if isinstance(msg, HumanMessage):
                 chatbot.append({"role": "user", "content": msg.content})
@@ -327,19 +334,21 @@ def demo_block():
         
         return state, chatbot, erase_button
     
-    def erase_gradio_session(state, chatbot):
+    def erase_gradio_session(state, chatbot, erase_button):
         session_path = state.get("session_path")
         if not session_path:
             print("No session path found. Cannot erase the session.")
             return state, chatbot
         erase_session(session_path)
         chatbot.clear()
-        return start_session(state["binary_path"], chatbot, erase_button)
+        state, chatbot, erase_button = start_session(state["binary_path"], chatbot, erase_button)
+        
+        return state, chatbot, erase_button
 
     async def process_request(message, history, state, user_id):
         if not user_id:
             user_id = str(uuid.uuid4())
-
+            
         config = {
             "configurable": {"thread_id": user_id},
             "recursion_limit": 500
@@ -359,6 +368,8 @@ def demo_block():
             "role": "user",
             "content": message
         })
+        
+        history_length_before_assistant = len(history)
         
         first = True
         last_message_type = None
@@ -393,7 +404,7 @@ def demo_block():
                         pass
                         # TODO: Handle tool call chunks
                     
-                    yield history, state, user_id, gr.Textbox(value="", interactive=False)
+                    yield history[history_length_before_assistant:], state, user_id
                 elif isinstance(msg, ToolMessageChunk):
                     msg: ToolMessageChunk
                     if msg.name is None:
@@ -413,27 +424,38 @@ def demo_block():
                     last_message_type = ToolMessage
         else:
             save_state(state)
-        yield history, state, user_id, gr.Textbox(value="", interactive=True)
+        yield history[history_length_before_assistant:], state, user_id
+        
+    chat_interface = gr.ChatInterface(fn=process_request,
+        # chatbot=chatbot,
+        # textbox=gradio_msg,
+        additional_inputs=[gradio_state, user_id],
+        additional_outputs=[gradio_state, user_id],
+        # save_history=True,
+        type="messages",
+    )
         
     
     file_input.upload(
         start_session,
-        inputs=[file_input, chatbot, erase_button],
-        outputs=[gradio_state, chatbot, erase_button]
+        inputs=[file_input, chat_interface.chatbot_value, erase_button],
+        outputs=[gradio_state, chat_interface.chatbot_value, erase_button]
     )
 
-    gradio_msg.submit(
-        process_request,
-        inputs=[gradio_msg, chatbot, gradio_state, user_id],
-        outputs=[chatbot, gradio_state, user_id, gradio_msg]
-    )
+    # gradio_msg.submit(
+    #     process_request,
+    #     inputs=[gradio_msg, chatbot, gradio_state, user_id],
+    #     outputs=[chatbot, gradio_state, user_id, gradio_msg]
+    # )
     
     # Link the erase_button to the erase_history function
     erase_button.click(
         erase_gradio_session,
-        inputs=[gradio_state, chatbot],
-        outputs=[gradio_state, chatbot]
+        inputs=[gradio_state, chat_interface.chatbot_value, erase_button],
+        outputs=[gradio_state, chat_interface.chatbot_value, erase_button]
     )
+    
+    
 
 
     gr.Markdown("""
