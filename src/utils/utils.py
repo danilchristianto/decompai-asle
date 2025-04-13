@@ -6,6 +6,7 @@ import pprint
 import hashlib
 import shutil
 import json
+import uuid
 
 import src.config as config
 
@@ -31,7 +32,7 @@ def build_docker_image():
 def run_command_in_docker(command: str) -> str:
     build_docker_image()
 
-    container_name = "decompai-runner"
+    container_name = "decompai-runner-" + str(uuid.uuid4())
 
     # {os.getcwd()}
 

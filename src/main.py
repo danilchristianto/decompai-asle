@@ -13,12 +13,16 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import START, END, StateGraph, MessagesState
 from langgraph.prebuilt import ToolNode
 from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 import openai
 from langgraph.prebuilt import InjectedState, InjectedStore
 from langchain_community.agent_toolkits import FileManagementToolkit
 import langchain_community.agent_toolkits.file_management.toolkit as file_management_toolkit
 from langchain_community.tools import CopyFileTool, DeleteFileTool, FileSearchTool, MoveFileTool, ReadFileTool, WriteFileTool, ListDirectoryTool
 from langchain_community.tools import ShellTool
+from langgraph.prebuilt import create_react_agent
+from langgraph.managed import IsLastStep, RemainingSteps
+from langchain_core.rate_limiters import InMemoryRateLimiter
 import tiktoken
 import asyncio
 import shutil
@@ -50,16 +54,42 @@ model_name = os.getenv("LLM_MODEL", "gpt-4o-mini")
 
 logging.info(f"Model name: {model_name}")
 
+model_context_length = utils.get_context_length(model_name)
+
+rate_limiter = InMemoryRateLimiter(
+    requests_per_second=0.25,  # <-- Super slow! We can only make a request once every 10 seconds!!
+    check_every_n_seconds=0.25,  # Wake up every 100 ms to check whether allowed to make a request,
+    max_bucket_size=15,  # Controls the maximum burst size.
+)
+
 openai_base_url = None
 api_key = os.getenv("OPENAI_API_KEY")
 if "gemini" in model_name:
     api_key = os.getenv("GEMINI_API_KEY")
     openai_base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
-
-model_context_length = utils.get_context_length(model_name)
-
+    content_null_value = " "
+    model = ChatGoogleGenerativeAI(
+        model=model_name,
+        temperature=0,
+        google_api_key=api_key,
+        streaming=True,
+        base_url=openai_base_url,
+        content_null_value=content_null_value,
+        rate_limiter=rate_limiter,
+        max_retries=10
+    )
+else:
+    model = ChatOpenAI(
+        model=model_name,
+        temperature=0,
+        openai_api_key=api_key,
+        streaming=True,
+        base_url=openai_base_url,
+        rate_limiter=rate_limiter,
+        max_retries=10,
+    )
 # Use the OpenAI model, bind it to the tools
-model = ChatOpenAI(model=model_name, temperature=0, openai_api_key=api_key, streaming=True, base_url=openai_base_url).bind_tools(all_tools)
+model = model.bind_tools(all_tools)
 
 # Define the function that calls the model
 async def call_model(state: State, config: RunnableConfig):
@@ -165,7 +195,17 @@ workflow.add_edge("tools", "agent")
 workflow.add_edge("feedback", "agent")
 
 checkpointer = MemorySaver()
-graph = workflow.compile(checkpointer=checkpointer)
+# graph = workflow.compile(checkpointer=checkpointer)
+
+def prepare_messages(state: State):
+    if "gemini" in model_name:
+        for m in state["messages"]:
+            if isinstance(m, AIMessage):
+                m.content = m.content or " "
+    return state["messages"]
+    
+
+graph = create_react_agent(model, all_tools, state_schema=State, checkpointer=checkpointer, prompt=prepare_messages)
 
 # graph.get_graph().draw_mermaid_png(output_file_path="graph.png")
 
@@ -189,8 +229,6 @@ def demo_block():
 
     Upload a binary and type your request. The agent will use tools as needed.
     """)
-
-    memory = MemorySaver()
     
     # chatbot = gr.Chatbot(
     #     show_copy_button=True,
@@ -264,14 +302,16 @@ def demo_block():
             print(f"Number of tokens: {num_tokens}")
 
             # Initialize state with binary and disassembled paths
-            state = {
-                "messages": messages,
-                "binary_path": binary_path,
-                "disassembled_path": disassembled_path,
-                "session_path": session_path,
-                "model_name": model_name,
-                "model_context_length": model_context_length,
-            }
+            state = State(
+                messages=messages,
+                is_last_step=IsLastStep(),
+                remaining_steps=RemainingSteps(),
+                binary_path=binary_path,
+                disassembled_path=disassembled_path,
+                session_path=session_path,
+                model_name=model_name,
+                model_context_length=model_context_length,
+            )
         
             if num_tokens <= model_context_length // 2: # Half of the token limit
                 # Add the disassembled code to the message history
@@ -356,7 +396,11 @@ def demo_block():
 
         if state is None:
             print("State is None. Starting a new session...")
-            state = {"messages": []}
+            state = State(
+                messages=[],
+                is_last_step=IsLastStep(),
+                remaining_steps=RemainingSteps(),
+            )
 
         # Check if the binary path exists in the state
         if "binary_path" not in state:
@@ -380,6 +424,9 @@ def demo_block():
                 state = data
             else:
                 msg, metadata = data
+                
+                if msg.content == None or msg.content == "":
+                    msg.content = ""
             
                 # if msg.content and not isinstance(msg, HumanMessage):
                 #     print(msg.content, end="|", flush=True)
@@ -403,8 +450,6 @@ def demo_block():
                     if msg.tool_call_chunks:
                         pass
                         # TODO: Handle tool call chunks
-                    
-                    yield history[history_length_before_assistant:], state, user_id
                 elif isinstance(msg, ToolMessageChunk):
                     msg: ToolMessageChunk
                     if msg.name is None:
@@ -422,6 +467,8 @@ def demo_block():
                     tool_name_str = f' {msg.name}' if msg.name else ''
                     history.append(ChatMessage(role="assistant", content=msg.content, metadata={"title": f'Response from tool{tool_name_str}', "parent_id": msg.tool_call_id}))
                     last_message_type = ToolMessage
+                    
+                yield history[history_length_before_assistant:], state, user_id
         else:
             save_state(state)
         yield history[history_length_before_assistant:], state, user_id
