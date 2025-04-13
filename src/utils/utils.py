@@ -87,34 +87,65 @@ def compile(target: str, c_code_path: str, binary_path: str):
     )
 
 
+def detect_architecture(binary_path: str) -> str:
+    result = run_command_in_docker(f"file {binary_path}")
+    output = result.stdout.strip()
+    if "MIPS" in output:
+        if "MSB" in output:
+            return "mips:big"
+        return "mips:little"
+    elif "ARM" in output:
+        return "arm"
+    elif "x86-64" in output:
+        return "x86_64"
+    elif "Intel 80386" in output:
+        return "i386"
+    else:
+        return "unknown"
+
 def objdump(args: str) -> str:
     """
-    Runs the objdump command with the specified arguments and returns its output.
+    Runs the objdump command with auto-detected architecture based on the binary in args.
     Args:
-        args (str): The arguments to pass to the objdump command.
+        args (str): The arguments to pass to objdump, including the binary path.
     Returns:
-        str: The output from the objdump command.
+        str: The output from objdump.
     """
+    # Extract binary path (assume it's the last argument in args)
+    tokens = args.strip().split()
+    binary_path = tokens[-1]
+
+    arch = detect_architecture(binary_path)
+    arch_flag = ""
+
+    objdump_command = "objdump"
+    if arch.startswith("mips"):
+        objdump_command = "mips-linux-gnu-objdump"
+        arch_flag = "-m mips -EL"
+    elif arch == "arm":
+        arch_flag = "-m arm"
+    elif arch == "i386":
+        arch_flag = "-m i386"
+    # no arch_flag needed for x86_64 or unknown
+
+    full_command = f"{objdump_command} {arch_flag} {args}"
 
     try:
-        result = run_command_in_docker(
-            f"objdump {args}"
-        )
+        result = run_command_in_docker(full_command)
+        return result.stdout
     except subprocess.CalledProcessError as e:
-        print(f"Error running objdump: {e.stderr}")
-
-    return result.stdout
-
-
+        print(f"[objdump] Error on {binary_path}: {e.stderr}")
+        return ""
+    
+    
 def disassemble_binary(binary_path, function_name=None, target_platform: str = "linux"):
-    asm = run_command_in_docker(
-        f"cd {os.path.dirname(binary_path)} && objdump -ds {os.path.basename(binary_path)}")
+    asm = objdump(f"-ds {binary_path}")
 
     if function_name is None:
-        return asm.stdout
+        return asm
     else:
-        return disassemble_function(asm.stdout, function_name)
-
+        return disassemble_function(asm, function_name)
+    
 
 def disassemble_section(binary_path, section_name):
     input_asm = disassemble_binary(binary_path)

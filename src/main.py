@@ -57,9 +57,9 @@ logging.info(f"Model name: {model_name}")
 model_context_length = utils.get_context_length(model_name)
 
 rate_limiter = InMemoryRateLimiter(
-    requests_per_second=0.25,  # <-- Super slow! We can only make a request once every 10 seconds!!
+    requests_per_second=0.20,  # <-- Super slow! We can only make a request once every 10 seconds!!
     check_every_n_seconds=0.25,  # Wake up every 100 ms to check whether allowed to make a request,
-    max_bucket_size=15,  # Controls the maximum burst size.
+    max_bucket_size=14,  # Controls the maximum burst size.
 )
 
 openai_base_url = None
