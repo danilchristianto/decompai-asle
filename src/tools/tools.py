@@ -12,6 +12,7 @@ from langchain_core.messages import (
 )
 from langgraph.prebuilt import InjectedState, InjectedStore
 from langchain_core.callbacks import CallbackManagerForToolRun
+from langgraph.config import get_stream_writer
 import json
 from pydantic import BaseModel, Field, create_model
 from inspect import Signature, Parameter
@@ -197,4 +198,49 @@ class CustomSandboxedShellTool(SandboxedShellTool):
         mounted_dirs = {agent_workspace_path:agent_workspace_path}
         workdir = agent_workspace_path
         return super()._run(commands, process_id, mounted_dirs, workdir, run_manager)
+
+@tool
+def run_ghidra_post_script(
+    script_path: str,
+    state: Annotated[State, InjectedState],
+    tool_call_id: Annotated[str, InjectedToolCallId],
+    script_args: str = ""
+) -> str:
+    """
+    Runs a Ghidra post-script using analyzeHeadless.
+    Args:
+        script_path: Path to the script relative to the agent workspace
+        script_args: Arguments to pass to the script
+    """
+    agent_workspace_path = get_agent_workspace_path(state)
+    full_script_path = os.path.join(agent_workspace_path, script_path)
+    
+    if not os.path.exists(full_script_path):
+        return ToolMessage(content=f"Script not found at {script_path}", tool_call_id=tool_call_id)
+    
+    try:
+        result = utils.run_ghidra_post_script(os.path.join(os.path.dirname(state["binary_path"]), config.AGENT_WORKSPACE_NAME, os.path.basename(state["binary_path"])), full_script_path, script_args)
+        return ToolMessage(content=result, tool_call_id=tool_call_id)
+    except Exception as e:
+        return ToolMessage(content=f"Error running Ghidra script: {str(e)}", tool_call_id=tool_call_id)
+
+
+@tool
+def decompile_function_with_ghidra(
+    function_name: str,
+    state: Annotated[State, InjectedState],
+    tool_call_id: Annotated[str, InjectedToolCallId]
+) -> str:
+    """
+    Decompiles a function using Ghidra's headless mode.
+    Args:
+        function_name: Name of the function to decompile
+    """
+    try:
+        writer = get_stream_writer()
+        writer(f"Decompiling function {function_name}...\n")
+        result = utils.decompile_function_with_ghidra(os.path.join(os.path.dirname(state["binary_path"]), config.AGENT_WORKSPACE_NAME, os.path.basename(state["binary_path"])), function_name)
+        return ToolMessage(content=result, tool_call_id=tool_call_id)
+    except Exception as e:
+        return ToolMessage(content=f"Error decompiling function: {str(e)}", tool_call_id=tool_call_id)
     

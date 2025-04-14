@@ -41,7 +41,8 @@ logging.basicConfig(level=logging.INFO)
 
 # Collect all tools
 custom_tools = [tools.disassemble_binary, tools.summarize_assembly, tools.disassemble_section, tools.disassemble_function,
-                tools.dump_memory, tools.get_string_at_address, tools.CustomSandboxedShellTool().as_tool()]
+                tools.dump_memory, tools.get_string_at_address, tools.CustomSandboxedShellTool().as_tool(),
+                tools.run_ghidra_post_script, tools.decompile_function_with_ghidra]
 
 excluded_tools = {FileSearchTool}
 file_management_tools = [tools.create_tool_function(t) for t in file_management_toolkit._FILE_TOOLS if t not in excluded_tools]
@@ -68,16 +69,28 @@ if "gemini" in model_name:
     api_key = os.getenv("GEMINI_API_KEY")
     openai_base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
     content_null_value = " "
-    model = ChatGoogleGenerativeAI(
-        model=model_name,
-        temperature=0,
-        google_api_key=api_key,
-        streaming=True,
-        base_url=openai_base_url,
-        content_null_value=content_null_value,
-        rate_limiter=rate_limiter,
-        max_retries=10
-    )
+    if "2.5-pro" in model_name:
+        model = ChatOpenAI(
+            model=model_name,
+            temperature=0,
+            openai_api_key=api_key,
+            streaming=True,
+            base_url=openai_base_url,
+            # content_null_value=content_null_value,
+            rate_limiter=rate_limiter,
+            max_retries=10
+        )
+    else:
+        model = ChatGoogleGenerativeAI(
+            model=model_name,
+            temperature=0,
+            google_api_key=api_key,
+            streaming=True,
+            base_url=openai_base_url,
+            content_null_value=content_null_value,
+            rate_limiter=rate_limiter,
+            max_retries=10
+        )
 else:
     model = ChatOpenAI(
         model=model_name,
@@ -252,7 +265,7 @@ def demo_block():
     # Replace UploadButton with File component
     file_input = gr.File(
         label="Upload a Binary File",
-        file_types=[".bin"],
+        file_types=["file"],
         file_count="single",
         type="filepath"
     )
@@ -417,11 +430,15 @@ def demo_block():
         
         first = True
         last_message_type = None
-        async for tuple in graph.astream(state, config=config, stream_mode=["messages", "values"]):
+        async for tuple in graph.astream(state, config=config, stream_mode=["messages", "values", "custom"]):
             
             stream_mode, data = tuple
             if stream_mode == "values":
                 state = data
+            elif stream_mode == "custom":
+                custom = data
+                print(f"Custom: {custom}")
+                # TODO: For tool streaming
             else:
                 msg, metadata = data
                 
@@ -452,8 +469,6 @@ def demo_block():
                         # TODO: Handle tool call chunks
                 elif isinstance(msg, ToolMessageChunk):
                     msg: ToolMessageChunk
-                    if msg.name is None:
-                        print(f"Name is None ToolMessageChunk: {msg}")
                     if last_message_type is not ToolMessageChunk:
                         last_message_type = ToolMessageChunk
                         tool_name_str = f' {msg.name}' if msg.name else ''
@@ -462,8 +477,6 @@ def demo_block():
                         history[-1].content += msg.content
                 elif isinstance(msg, ToolMessage):
                     msg: ToolMessage
-                    if msg.name is None:
-                        print(f"Name is None ToolMessage: {msg}")
                     tool_name_str = f' {msg.name}' if msg.name else ''
                     history.append(ChatMessage(role="assistant", content=msg.content, metadata={"title": f'Response from tool{tool_name_str}', "parent_id": msg.tool_call_id}))
                     last_message_type = ToolMessage

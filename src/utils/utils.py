@@ -29,14 +29,20 @@ def build_docker_image():
     image_built = True
 
 
-def run_command_in_docker(command: str) -> str:
+class CommandResult:
+    def __init__(self, stdout: str, stderr: str, combined: str):
+        self.stdout = stdout
+        self.stderr = stderr
+        self.combined = combined
+
+    def __str__(self):
+        return self.combined
+
+
+def run_command_in_docker(command: str) -> CommandResult:
     build_docker_image()
 
     container_name = "decompai-runner-" + str(uuid.uuid4())
-
-    # {os.getcwd()}
-
-    # command = command.replace('"', '\\"')
 
     docker_run_command = (
         f"docker run --rm --name {container_name} "
@@ -46,9 +52,27 @@ def run_command_in_docker(command: str) -> str:
         f"--platform linux/amd64 -w / {DOCKER_IMAGE} "
         f"/bin/sh -c \"{command}\""
     )
-    result = subprocess.run(docker_run_command, shell=True,
-                            capture_output=True, text=True, check=True)
-    return result
+    
+    print(f"Running command in docker: {docker_run_command}")
+    
+    result = subprocess.run(
+        docker_run_command,
+        shell=True,
+        capture_output=True,
+        text=True,
+        check=True
+    )
+    
+    # Combine outputs with separator if stderr is not empty
+    combined = result.stdout
+    if result.stderr:
+        combined += "\n=== STDERR ===\n" + result.stderr
+    
+    return CommandResult(
+        stdout=result.stdout,
+        stderr=result.stderr,
+        combined=combined
+    )
 
 
 def hash_file(filepath: str) -> str:
@@ -132,7 +156,7 @@ def objdump(args: str) -> str:
 
     try:
         result = run_command_in_docker(full_command)
-        return result.stdout
+        return result.combined
     except subprocess.CalledProcessError as e:
         print(f"[objdump] Error on {binary_path}: {e.stderr}")
         return ""
@@ -333,7 +357,7 @@ def dump_memory(binary_path: str, address: int, length: int) -> bytes:
         data = json.loads(result.stdout)
         return bytes(data)
     except Exception as e:
-        return b""
+        return result.combined
 
 
 def get_string_at_address(binary_path: str, address: int) -> str:
@@ -342,7 +366,131 @@ def get_string_at_address(binary_path: str, address: int) -> str:
     """
     cmd = f"r2 -qc 'psz @ {hex(address)}; quit' {binary_path}"
     result = run_command_in_docker(cmd)
-    return result.stdout.strip()
+    return result.combined.strip()
+
+
+def run_ghidra_post_script(binary_path: str, script_path: str, script_args: str = "") -> str:
+    """
+    Runs a Ghidra post-script using analyzeHeadless.
+    Args:
+        binary_path: Path to the binary to analyze
+        script_path: Path to the script to run
+        script_args: Arguments to pass to the script
+    Returns:
+        str: Combined output from stdout and stderr, preserving order
+    """
+    print(f"Running Ghidra analyzeHeadless on {binary_path} with script {script_path} and args {script_args}")
+    
+    # Create Ghidra project directory
+    project_dir = os.path.dirname(binary_path)
+    project_name = "ghidra_project"
+    
+    # Check if project already exists
+    project_exists = os.path.exists(os.path.join(project_dir, f"{project_name}.gpr"))
+    
+    # Build the command
+    command_parts = [
+        "analyzeHeadless",
+        project_dir,
+        project_name
+    ]
+    
+    # Only add import if project doesn't exist
+    if not project_exists:
+        print(f"Importing {binary_path} into Ghidra project {project_name}")
+        command_parts.extend(["-import", binary_path])
+    else:
+        print(f"Ghidra project {project_name} already exists")
+        command_parts.extend(["-process", os.path.basename(binary_path)])
+    
+    # Add script parameters
+    command_parts.extend([
+        "-scriptPath", os.path.dirname(script_path),
+        "-postScript", os.path.basename(script_path),
+        script_args
+    ])
+    
+    # Run Ghidra analyzeHeadless
+    command = " ".join(command_parts)
+    result = run_command_in_docker(command)
+    return result.combined
+
+
+def decompile_function_with_ghidra(binary_path: str, function_name: str) -> str:
+    """
+    Decompiles a function using Ghidra's headless mode.
+    Args:
+        binary_path: Path to the binary
+        function_name: Name of the function to decompile
+    Returns:
+        str: Decompiled function code
+    """
+    # Create the decompile script content
+    script_content = """#!/usr/bin/env python2.7
+import os
+import sys
+import json
+
+def decompile_function():
+    print("Decompiling function with Ghidra")
+
+    # Ghidra passes arguments via getScriptArgs()
+    args = getScriptArgs()
+    if len(args) != 1:
+        print("Usage: decompile_function.py <function_name>")
+        exit(1)
+
+    function_name = args[0]
+    
+    print("Function name: {}".format(function_name))
+    
+    # Get the current program
+    program = currentProgram
+    if not program:
+        print("No program loaded")
+        sys.exit(1)
+    
+    # Find the function
+    function = getFunction(function_name)
+    if not function:
+        print("Function {} not found".format(function_name))
+        sys.exit(1)
+    
+    # Get the decompiler
+    decompiler = ghidra.app.decompiler.DecompInterface()
+    decompiler.openProgram(program)
+    
+    # Decompile the function
+    decompile_results = decompiler.decompileFunction(function, 30, monitor)
+    if not decompile_results.decompileCompleted():
+        print("Decompilation failed")
+        sys.exit(1)
+    
+    # Get the decompiled code
+    decompiled_code = decompile_results.getDecompiledFunction().getC()
+    print("/* Decompiled '{}' */".format(function_name))
+    print(decompiled_code)
+    
+    # Output the result as JSON
+    result = {
+        "function_name": function_name,
+        "decompiled_code": decompiled_code
+    }
+    return json.dumps(result)
+
+if __name__ == "__main__":
+    decompile_function()
+"""
+
+    print(f"Creating decompile script for {binary_path} and {function_name}")
+
+    # Write the script to a temporary file
+    script_path = os.path.join(os.path.dirname(binary_path), "decompile_function.py")
+    with open(script_path, "w") as f:
+        f.write(script_content)
+    
+    # Run the script
+    return run_ghidra_post_script(binary_path, script_path, function_name)
 
 
 if __name__ == "__main__":
