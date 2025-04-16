@@ -2,6 +2,7 @@ import subprocess
 import uuid
 import logging
 import shlex
+import re
 from typing import List, Union, Dict
 
 logger = logging.getLogger(__name__)
@@ -59,7 +60,7 @@ class DockerizedBashProcess:
             result = subprocess.run(
                 docker_run_command,
                 shell=True,
-                check=True,
+                check=False,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
@@ -92,12 +93,13 @@ class DockerizedBashProcess:
             logger.error(f"Error initializing persistent shell: {e}")
             raise
 
-    def run(self, commands: Union[str, List[str]]) -> str:
+    def run(self, commands: Union[str, List[str]], filter_color_codes: bool = True) -> str:
         """
         Runs a command or a list of commands.
 
         Args:
             commands (str or List[str]): The shell command(s) to execute.
+            filter_color_codes (bool): Whether to filter ANSI color codes from output.
 
         Returns:
             str: The output from executing the command(s).
@@ -110,9 +112,12 @@ class DockerizedBashProcess:
                 self.container_id = self._initialize_persistent_container(self.container_name)
                 self._initialize_persistent_shell()
             if self.container_id and self.persistent_process:
-                return self._run_persistent(joined_commands)
+                output = self._run_persistent(joined_commands)
         else:
-            return self._run(joined_commands)
+            output = self._run(joined_commands)
+        if filter_color_codes:
+            output = self._remove_color_codes(output)
+        return output
 
     def _run(self, command: str) -> str:
         """
@@ -133,7 +138,7 @@ class DockerizedBashProcess:
             output = subprocess.run(
                 docker_run_command,
                 shell=True,
-                check=True,
+                check=False,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
             ).stdout.decode()
@@ -196,7 +201,7 @@ class DockerizedBashProcess:
                 subprocess.run(
                     docker_stop_command,
                     shell=True,
-                    check=True,
+                    check=False,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                 )
@@ -216,3 +221,9 @@ class DockerizedBashProcess:
     def __del__(self):
         # Fallback cleanup if not used as a context manager.
         self.stop_persistent_container()
+
+    @staticmethod
+    def _remove_color_codes(text: str) -> str:
+        """Remove ANSI color codes from the given text."""
+        ansi_escape = re.compile(r'\x1B\[[0-?]*[ -/]*[@-~]')
+        return ansi_escape.sub('', text)

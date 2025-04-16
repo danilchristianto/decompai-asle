@@ -33,7 +33,7 @@ class SandboxedShellInput(BaseModel):
 
 def _get_platform() -> str:
     """Get platform."""
-    return "Linux"
+    return "Kali Linux"
 
 
 def _get_dockerized_bash_process(
@@ -52,7 +52,7 @@ def _get_dockerized_bash_process(
 class SandboxedShellTool(BaseTool):
     """Tool to run shell commands."""
 
-    name: str = "persistent_terminal"
+    name: str = "kali_stateful_shell"
     description: str = f"Run shell commands on this {_get_platform()} machine."
     args_schema: Type[BaseModel] = SandboxedShellInput
     ask_human_input: bool = False
@@ -106,4 +106,4 @@ class SandboxedShellTool(BaseTool):
 
         except Exception as e:
             logger.error(f"Error during command execution: {e}")
-            return None
+            return f"Error during command execution: {e}"

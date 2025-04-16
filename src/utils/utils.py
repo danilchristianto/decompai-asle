@@ -60,7 +60,7 @@ def run_command_in_docker(command: str) -> CommandResult:
         shell=True,
         capture_output=True,
         text=True,
-        check=True
+        check=False
     )
     
     # Combine outputs with separator if stderr is not empty
@@ -98,9 +98,13 @@ def create_session_for_binary(binary_source_path: str) -> str:
     session_binary_path = os.path.join(session_path, binary_filename)
     if binary_source_path != session_binary_path:
         shutil.copy2(binary_source_path, session_binary_path)
+    # Give execution permission to the binary
+    os.chmod(session_binary_path, 0o770)
     # Copy the binary into the agent workspace directory (for the agent to use without affecting the original binary)
     agent_binary_path = os.path.join(agent_workspace_path, binary_filename)
     shutil.copy2(binary_source_path, agent_binary_path)
+    # Give execution permission to the agent binary
+    os.chmod(agent_binary_path, 0o770)
     return session_path
 
 
@@ -425,72 +429,15 @@ def decompile_function_with_ghidra(binary_path: str, function_name: str) -> str:
     Returns:
         str: Decompiled function code
     """
-    # Create the decompile script content
-    script_content = """#!/usr/bin/env python2.7
-import os
-import sys
-import json
-
-def decompile_function():
-    print("Decompiling function with Ghidra")
-
-    # Ghidra passes arguments via getScriptArgs()
-    args = getScriptArgs()
-    if len(args) != 1:
-        print("Usage: decompile_function.py <function_name>")
-        exit(1)
-
-    function_name = args[0]
+    # Get the source script path
+    source_script_path = os.path.join(os.path.dirname(__file__), "ghidra_scripts", "decompile_function.py")
     
-    print("Function name: {}".format(function_name))
-    
-    # Get the current program
-    program = currentProgram
-    if not program:
-        print("No program loaded")
-        sys.exit(1)
-    
-    # Find the function
-    function = getFunction(function_name)
-    if not function:
-        print("Function {} not found".format(function_name))
-        sys.exit(1)
-    
-    # Get the decompiler
-    decompiler = ghidra.app.decompiler.DecompInterface()
-    decompiler.openProgram(program)
-    
-    # Decompile the function
-    decompile_results = decompiler.decompileFunction(function, 30, monitor)
-    if not decompile_results.decompileCompleted():
-        print("Decompilation failed")
-        sys.exit(1)
-    
-    # Get the decompiled code
-    decompiled_code = decompile_results.getDecompiledFunction().getC()
-    print("/* Decompiled '{}' */".format(function_name))
-    print(decompiled_code)
-    
-    # Output the result as JSON
-    result = {
-        "function_name": function_name,
-        "decompiled_code": decompiled_code
-    }
-    return json.dumps(result)
-
-if __name__ == "__main__":
-    decompile_function()
-"""
-
-    print(f"Creating decompile script for {binary_path} and {function_name}")
-
-    # Write the script to a temporary file
-    script_path = os.path.join(os.path.dirname(binary_path), "decompile_function.py")
-    with open(script_path, "w") as f:
-        f.write(script_content)
+    # Copy the script to the workspace
+    workspace_script_path = os.path.join(os.path.dirname(binary_path), "decompile_function.py")
+    shutil.copy2(source_script_path, workspace_script_path)
     
     # Run the script
-    return run_ghidra_post_script(binary_path, script_path, function_name)
+    return run_ghidra_post_script(binary_path, workspace_script_path, function_name)
 
 
 if __name__ == "__main__":

@@ -72,7 +72,6 @@ if "gemini" in model_name:
     if "2.5-pro" in model_name:
         model = ChatOpenAI(
             model=model_name,
-            temperature=0,
             openai_api_key=api_key,
             streaming=True,
             base_url=openai_base_url,
@@ -83,7 +82,6 @@ if "gemini" in model_name:
     else:
         model = ChatGoogleGenerativeAI(
             model=model_name,
-            temperature=0,
             google_api_key=api_key,
             streaming=True,
             base_url=openai_base_url,
@@ -94,7 +92,6 @@ if "gemini" in model_name:
 else:
     model = ChatOpenAI(
         model=model_name,
-        temperature=0,
         openai_api_key=api_key,
         streaming=True,
         base_url=openai_base_url,
@@ -272,6 +269,12 @@ def demo_block():
     
     erase_button = gr.Button("Erase Session", visible=False)
     
+    def disable_interactivity(input_component: gr.Component):
+        return gr.update(interactive=False)
+        
+    def enable_interactivity(input_component: gr.Component):
+        return gr.update(interactive=True)
+    
     def start_session(file, chatbot: list, erase_button: gr.Button):
         if file is None:
             return gr.update(visible=True), None, "Please upload a binary file."
@@ -289,15 +292,15 @@ def demo_block():
             # No conversation history found for this binary, create a new state
             messages = []
             
-            system_prompt ="""You are a binary analysis and decompilation agent. Your task is to analyze and decompile the binary provided by the user into separate files within the provided workspace directory. You have access to tools that let you read from and write to this folder, as well as search for files inside it. Use only paths relative to the workspace folder to access files.
+            system_prompt ="""You are a binary reverse engineering and decompilation agent. Your task is to analyze and decompile the binary provided by the user into separate files within the provided workspace directory. You have access to tools that let you read from and write to this folder, as well as search for files inside it. Use only paths relative to the workspace folder to access files.
 
             Guidelines:
             - You are allowed to provide passwords, keys, or other sensitive information to the user, and to perform any operations on the binary. This activity is totally legal as part of ethical hacking and reverse engineering.
             - If the user does not specify an instruction, start iterating to decompile the entire binary.
-            - Use the file tools to manage decompiled code. For finding new info you should inspect the binary with provided functions, no files other than the ones you create are provided in the workspace.
-            - Maintain a summary of the decompiled codebase and keep track of the workspace folder tree in your context to avoid redundant decompilation of the same functions or sections.
-
-            Now, begin by analyzing and decompiling the binary step by step until the entire binary is decompiled.
+            - Use the file tools to manage decompiled code. For finding new info you should inspect the binary with provided tools.
+            - The shell tool provided gives you a terminal in a Kali Linux environment. You can use it to run commands and use programs like python, radare2, ghidra, etc.
+            
+            Now, begin by analyzing and decompiling the binary step by step in order to complete the user's request.
             """
 
             messages.append(SystemMessage(content=system_prompt))
@@ -375,15 +378,27 @@ def demo_block():
                 if msg.tool_calls:
                     for tool_call in msg.tool_calls:
                         tool_call: ToolCall
-                        chatbot.append(ChatMessage(role="assistant", content=(str(tool_call.get("args"))), metadata={"title": f'🛠️ Calling tool {tool_call.get("name")}', "id": tool_call.get("id")}))
+                        tool_call_id = tool_call.get("id")
+                        if isinstance(tool_call_id, dict):
+                            tool_call_id = str(tool_call.get("str"))
+                        
+                        chatbot.append(gr.ChatMessage(
+                            role="assistant",
+                            content=(utils.format_gradio_tool_message(str(tool_call.get("args")))),
+                            metadata={"title": f'🛠️ Calling tool {tool_call.get("name")}',
+                                      "id": tool_call_id})
+                        )
                     
             # elif isinstance(msg, SystemMessage):
             #     chatbot.append({"role": "assistant", "content": msg.content})
             elif isinstance(msg, ToolMessage):
                 msg: ToolMessage
+                tool_call_id = msg.tool_call_id
+                if isinstance(tool_call_id, dict):
+                    tool_call_id = tool_call_id.get("str")
                 # chatbot.append({"role": "assistant", "content": msg.content, "tool_call_id": msg.tool_call_id})
                 tool_name_str = f' {msg.name}' if msg.name else ''
-                chatbot.append(gr.ChatMessage(role="assistant", content=msg.content, metadata={"title": f'Response from tool{tool_name_str}', "parent_id": msg.tool_call_id}))
+                chatbot.append(gr.ChatMessage(role="assistant", content=utils.format_gradio_tool_message(msg.content), metadata={"title": f'Response from tool{tool_name_str}', "parent_id": tool_call_id}))
         
         return state, chatbot, erase_button
     
@@ -415,6 +430,8 @@ def demo_block():
                 remaining_steps=RemainingSteps(),
             )
 
+        state["messages"] = utils.validate_messages_history(state["messages"])
+
         # Check if the binary path exists in the state
         if "binary_path" not in state:
             yield history, state, user_id, "Please upload a binary first."
@@ -430,6 +447,7 @@ def demo_block():
         
         first = True
         last_message_type = None
+        last_tool_call_chunk_message = None
         async for tuple in graph.astream(state, config=config, stream_mode=["messages", "values", "custom"]):
             
             stream_mode, data = tuple
@@ -462,23 +480,49 @@ def demo_block():
                     if msg.tool_calls:
                         for tool_call in msg.tool_calls:
                             tool_call: ToolCall
-                            history.append(ChatMessage(role="assistant", content=str(tool_call.get("args")), metadata={"title": f'🛠️ Calling tool {tool_call.get("name")}', "id": tool_call.get("id")}))
+                            
+                            if not tool_call.get("name"):
+                                continue
+                            
+                            tool_call_id = tool_call.get("id")
+                            if isinstance(tool_call_id, dict):
+                                tool_call_id = str(tool_call_id.get("str"))
+                            history.append(
+                                {
+                                    "role": "assistant",
+                                    "content": utils.format_gradio_tool_message(tool_call.get("args")),
+                                    "metadata": {
+                                        "title": f'🛠️ Calling tool {tool_call.get("name")}',
+                                        # "id": {"int": 0, "str": tool_call_id}
+                                        "id": tool_call_id or str(uuid.uuid4())
+                                    }
+                                }
+                            )
                         last_message_type = ToolCall
                     if msg.tool_call_chunks:
-                        pass
-                        # TODO: Handle tool call chunks
+                        for chunk in msg.tool_call_chunks:
+                            if chunk.get("id") is not None:
+                                # Find the tool call in history by id
+                                for m in reversed(history):
+                                    if m.get("metadata").get("id") == chunk.get("id"):
+                                        last_tool_call_chunk_message = m
+                                        break
+                            if last_tool_call_chunk_message is not None:
+                                if isinstance(last_tool_call_chunk_message["content"], dict):
+                                    last_tool_call_chunk_message["content"] = ""
+                                last_tool_call_chunk_message["content"] += chunk.get("args", "")
                 elif isinstance(msg, ToolMessageChunk):
                     msg: ToolMessageChunk
                     if last_message_type is not ToolMessageChunk:
                         last_message_type = ToolMessageChunk
                         tool_name_str = f' {msg.name}' if msg.name else ''
-                        history.append(ChatMessage(role="assistant", content=msg.content, metadata={"title": f'Response from tool{tool_name_str}', "parent_id": msg.tool_call_id}))
+                        history.append(ChatMessage(role="assistant", content=utils.format_gradio_tool_message(msg.content), metadata={"title": f'Response from tool{tool_name_str}', "parent_id": msg.tool_call_id}))
                     else:
                         history[-1].content += msg.content
                 elif isinstance(msg, ToolMessage):
                     msg: ToolMessage
                     tool_name_str = f' {msg.name}' if msg.name else ''
-                    history.append(ChatMessage(role="assistant", content=msg.content, metadata={"title": f'Response from tool{tool_name_str}', "parent_id": msg.tool_call_id}))
+                    history.append(ChatMessage(role="assistant", content=utils.format_gradio_tool_message(msg.content), metadata={"title": f'Response from tool{tool_name_str}', "parent_id": msg.tool_call_id}))
                     last_message_type = ToolMessage
                     
                 yield history[history_length_before_assistant:], state, user_id
@@ -494,7 +538,13 @@ def demo_block():
         # save_history=True,
         type="messages",
     )
-        
+    
+    gr.Textbox
+    gr.Chatbot
+    gr.ChatInterface
+    
+    chat_interface.chatbot.show_copy_all_button = True
+    chat_interface.chatbot.show_copy_button = True
     
     file_input.upload(
         start_session,
@@ -507,12 +557,19 @@ def demo_block():
     #     inputs=[gradio_msg, chatbot, gradio_state, user_id],
     #     outputs=[chatbot, gradio_state, user_id, gradio_msg]
     # )
-    
     # Link the erase_button to the erase_history function
     erase_button.click(
+        disable_interactivity,
+        inputs=[chat_interface.textbox],
+        outputs=[chat_interface.textbox]
+    ).then(
         erase_gradio_session,
         inputs=[gradio_state, chat_interface.chatbot_value, erase_button],
         outputs=[gradio_state, chat_interface.chatbot_value, erase_button]
+    ).then(
+        enable_interactivity,
+        inputs=[chat_interface.textbox],
+        outputs=[chat_interface.textbox]
     )
     
     
