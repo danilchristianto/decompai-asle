@@ -23,6 +23,14 @@ ENV PATH="$GHIDRA_HOME:$GHIDRA_HOME/support:$PATH"
 RUN apt-get update && apt-get install -y openjdk-21-jdk wget unzip && \
 rm -rf /var/lib/apt/lists/*
 
+# Install ninja and meson
+RUN apt-get update && apt-get install -y ninja-build meson pkg-config && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install r2dec
+RUN r2pm -U && \
+    r2pm -i r2dec && \
+    r2pm -ci r2ghidra
 
 # Install file
 # RUN apt-get update && apt-get install -y file binutils-mips-linux-gnu && rm -rf /var/lib/apt/lists/*

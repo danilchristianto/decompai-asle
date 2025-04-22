@@ -10,36 +10,50 @@ def decompile_function():
     args = getScriptArgs()
     if len(args) != 1:
         print("Usage: decompile_function.py <function_name>")
-        exit(1)
+        sys.exit(1)
 
     function_name = args[0]
-    
     print("Function name: {}".format(function_name))
-    
+
     # Get the current program
     program = currentProgram
     if not program:
         print("No program loaded")
         sys.exit(1)
         
+    # Attempt a symbol search first
+    function = None
+    symbol_table = program.getSymbolTable()
+    symbols = symbol_table.getSymbols(function_name)
     
-        # Find the function
-    function = getFunction(function_name)
-    if not function:
-        print("Function {} not found".format(function_name))
-        functions = getGlobalFunctions(function_name)
-        if not functions:
-            print("Function {} not found".format(function_name))
-            
-            # Print all functions available in the program
-            # print("Functions available in the program:")
-            # for func in getGlobalFunctions():
-            #     print(func.getName())
-            sys.exit(1)
-        function = functions[0]
+    if symbols is not None and symbols.hasNext():
+        print("Symbol(s) found for '{}'.".format(function_name))
+        symbol = symbols.next()  # get first symbol found
+        if symbol is not None:
+            listing = program.getListing()
+            addr = symbol.getAddress()
+            function = listing.getFunctionAt(addr)
+        else:
+            print("Symbol object returned is None for '{}'.".format(function_name))
+    else:
+        print("No symbol found for '{}'.".format(function_name))
     
-    # Get the decompiler
-    decompiler = ghidra.app.decompiler.DecompInterface()
+    # If symbol search didn't produce a function, fall back to direct function search.
+    if function is None:
+        print("Attempting function search with getFunction() / getGlobalFunctions()")
+        function = getFunction(function_name)
+        if not function:
+            # Use global search if getFunction didn't work
+            functions = getGlobalFunctions(function_name)
+            if functions:
+                function = functions[0]
+            else:
+                print("Function '{}' not found by symbol or function search.".format(function_name))
+                sys.exit(1)
+    
+    # Get the decompiler interface
+    from ghidra.app.decompiler import DecompInterface
+    decompiler = DecompInterface()
     decompiler.openProgram(program)
     
     # Decompile the function
@@ -52,13 +66,6 @@ def decompile_function():
     decompiled_code = decompile_results.getDecompiledFunction().getC()
     print("/* Decompiled '{}' */".format(function_name))
     print(decompiled_code)
-    
-    # Output the result as JSON
-    result = {
-        "function_name": function_name,
-        "decompiled_code": decompiled_code
-    }
-    return json.dumps(result)
 
 if __name__ == "__main__":
-    decompile_function() 
+    decompile_function()

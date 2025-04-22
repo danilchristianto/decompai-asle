@@ -1,4 +1,4 @@
-from typing_extensions import Annotated, TypedDict
+from typing_extensions import Annotated, TypedDict, Optional
 from langgraph.graph.message import AnyMessage, add_messages
 from langgraph.managed import IsLastStep, RemainingSteps
 
@@ -15,3 +15,5 @@ class State(AgentState):
     session_path: str | None
     model_name: str | None
     model_context_length: int | None
+    r2_stateful_shell_history: Optional[list[str]]
+    r2_stateful_shell_output_line_count: int | None

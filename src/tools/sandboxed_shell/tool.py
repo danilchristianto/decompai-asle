@@ -105,5 +105,6 @@ class SandboxedShellTool(BaseTool):
                 return process.run(commands)
 
         except Exception as e:
+            # TODO: Fix [Errno 32] Broken pipe
             logger.error(f"Error during command execution: {e}")
             return f"Error during command execution: {e}"

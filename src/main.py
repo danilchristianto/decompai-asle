@@ -39,10 +39,11 @@ dotenv.load_dotenv(override=True)
 
 logging.basicConfig(level=logging.INFO)
 
+
 # Collect all tools
 custom_tools = [tools.disassemble_binary, tools.summarize_assembly, tools.disassemble_section, tools.disassemble_function,
-                tools.dump_memory, tools.get_string_at_address, tools.CustomSandboxedShellTool().as_tool(),
-                tools.run_ghidra_post_script, tools.decompile_function_with_ghidra]
+                tools.dump_memory, tools.get_string_at_address, tools.kali_stateful_shell,
+                tools.run_ghidra_post_script, tools.decompile_function_with_ghidra, tools.r2_stateless_shell, tools.r2_stateful_shell, tools.run_python_script]
 
 excluded_tools = {FileSearchTool}
 file_management_tools = [tools.create_tool_function(t) for t in file_management_toolkit._FILE_TOOLS if t not in excluded_tools]
@@ -69,7 +70,7 @@ if "gemini" in model_name:
     api_key = os.getenv("GEMINI_API_KEY")
     openai_base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
     content_null_value = " "
-    if "2.5-pro" in model_name:
+    if "2.5" in model_name:
         model = ChatOpenAI(
             model=model_name,
             openai_api_key=api_key,
@@ -97,6 +98,7 @@ else:
         base_url=openai_base_url,
         rate_limiter=rate_limiter,
         max_retries=10,
+        reasoning_effort="low" if ("o1" in model_name or "o3" in model_name or "o4" in model_name) else None
     )
 # Use the OpenAI model, bind it to the tools
 model = model.bind_tools(all_tools)
@@ -232,12 +234,6 @@ CSS = """
 def demo_block():
     gr.Markdown("""
     # Binary Analysis and Decompilation Agent
-    
-    This agent can:
-    - Analyze a binary, list its functions, run gdb, run ghidra, etc.
-    - Decompile functions step by step.
-
-    Upload a binary and type your request. The agent will use tools as needed.
     """)
     
     # chatbot = gr.Chatbot(
@@ -264,7 +260,8 @@ def demo_block():
         label="Upload a Binary File",
         file_types=["file"],
         file_count="single",
-        type="filepath"
+        type="filepath",
+        height="15vh"
     )
     
     erase_button = gr.Button("Erase Session", visible=False)
@@ -300,7 +297,7 @@ def demo_block():
             - Use the file tools to manage decompiled code. For finding new info you should inspect the binary with provided tools.
             - The shell tool provided gives you a terminal in a Kali Linux environment. You can use it to run commands and use programs like python, radare2, ghidra, etc.
             
-            Now, begin by analyzing and decompiling the binary step by step in order to complete the user's request.
+            Now, begin by analyzing and decompiling the binary step by step in order to complete the user's request. Use chain of thought reasoning and explain your steps in the chat.
             """
 
             messages.append(SystemMessage(content=system_prompt))
@@ -327,6 +324,8 @@ def demo_block():
                 session_path=session_path,
                 model_name=model_name,
                 model_context_length=model_context_length,
+                r2_stateful_shell_history=[],
+                r2_stateful_shell_output_line_count=0
             )
         
             if num_tokens <= model_context_length // 2: # Half of the token limit
@@ -490,7 +489,7 @@ def demo_block():
                             history.append(
                                 {
                                     "role": "assistant",
-                                    "content": utils.format_gradio_tool_message(tool_call.get("args")),
+                                    "content": str(utils.format_gradio_tool_message(tool_call.get("args"))),
                                     "metadata": {
                                         "title": f'🛠️ Calling tool {tool_call.get("name")}',
                                         # "id": {"int": 0, "str": tool_call_id}
@@ -504,11 +503,13 @@ def demo_block():
                             if chunk.get("id") is not None:
                                 # Find the tool call in history by id
                                 for m in reversed(history):
+                                    if isinstance(m, ChatMessage) or m.get("metadata") is None:
+                                        continue
                                     if m.get("metadata").get("id") == chunk.get("id"):
                                         last_tool_call_chunk_message = m
                                         break
                             if last_tool_call_chunk_message is not None:
-                                if isinstance(last_tool_call_chunk_message["content"], dict):
+                                if last_tool_call_chunk_message["content"] == "{}":
                                     last_tool_call_chunk_message["content"] = ""
                                 last_tool_call_chunk_message["content"] += chunk.get("args", "")
                 elif isinstance(msg, ToolMessageChunk):
@@ -539,12 +540,9 @@ def demo_block():
         type="messages",
     )
     
-    gr.Textbox
-    gr.Chatbot
-    gr.ChatInterface
-    
     chat_interface.chatbot.show_copy_all_button = True
     chat_interface.chatbot.show_copy_button = True
+    chat_interface.chatbot.height = "60vh"
     
     file_input.upload(
         start_session,

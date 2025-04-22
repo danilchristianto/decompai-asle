@@ -135,16 +135,26 @@ class DockerizedBashProcess:
         workdir_arg = f" -w {self.workdir}" if self.workdir else ""
         docker_run_command = f"docker run --rm{mounted_dirs_args}{workdir_arg} --platform linux/amd64 decompai-runner bash -c {safe_command}"
         try:
-            output = subprocess.run(
+            result = subprocess.run(
                 docker_run_command,
                 shell=True,
                 check=False,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-            ).stdout.decode()
+                stderr=subprocess.PIPE,
+            )
+            stdout = result.stdout.decode()
+            stderr = result.stderr.decode()
+            output = stdout
+            if stderr:
+                output += f"\n=== STDERR ===\n" + stderr
         except subprocess.CalledProcessError as error:
             if self.return_err_output:
-                return error.stdout.decode()
+                stdout = error.stdout.decode() if error.stdout else ''
+                stderr = error.stderr.decode() if error.stderr else ''
+                output = stdout
+                if stderr:
+                    output += f"\n=== STDERR ===\n" + stderr
+                return output
             return str(error)
         if self.strip_newlines:
             output = output.strip()
@@ -167,7 +177,7 @@ class DockerizedBashProcess:
         # Send the command followed by a newline.
         self.persistent_process.stdin.write(full_command + "\n")
         self.persistent_process.stdin.flush()
-        
+
         output_lines = []
         # Read lines until we encounter the marker.
         while True:
@@ -180,6 +190,19 @@ class DockerizedBashProcess:
                 break
             output_lines.append(line)
         output = ''.join(output_lines)
+        # Now, try to read from stderr if available
+        stderr = ''
+        if self.persistent_process.stderr:
+            try:
+                # Non-blocking read of stderr
+                import select
+                rlist, _, _ = select.select([self.persistent_process.stderr], [], [], 0.1)
+                if rlist:
+                    stderr = self.persistent_process.stderr.read()
+            except Exception:
+                pass
+        if stderr:
+            output += f"\n=== STDERR ===\n" + stderr
         if self.strip_newlines:
             output = output.strip()
         return output

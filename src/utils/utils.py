@@ -28,6 +28,8 @@ def build_docker_image():
     subprocess.run(docker_build_command, shell=True, check=True)
     image_built = True
 
+def get_binary_path_in_workspace(binary_path: str) -> str:
+    return os.path.join(os.path.dirname(binary_path), config.AGENT_WORKSPACE_NAME, os.path.basename(binary_path))
 
 class CommandResult:
     def __init__(self, stdout: str, stderr: str, combined: str):
