@@ -165,6 +165,8 @@ We welcome pull requests!
 - **Louis Gauthier** - [@louisgthier](https://github.com/louisgthier)
 - **Clément Florval** - [@ClementFrvl](https://github.com/ClementFrvl)
 
+Project developed as part of a school research initiative. Check out other projects at [Digiwave](https://dgwave.net/portfolio).
+
 ---
 
 ## Ethics & Legal
