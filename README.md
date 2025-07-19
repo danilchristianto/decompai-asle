@@ -6,13 +6,12 @@ A professional binary reverse engineering and decompilation agent that provides 
 
 ### 🚀 **Automatic Comprehensive Analysis**
 - **Zero User Intervention**: Upload a binary and get professional results automatically
-- **Complete Workflow**: File analysis → Security assessment → Function decompilation → Executive summary
+- **Complete Workflow**: File analysis → Function decompilation → Executive summary
 - **Chunked Output**: Large reports are automatically split to avoid context length issues
 - **Professional Reports**: All analysis saved to workspace for easy review
 
 ### 🛠️ **Analysis Tools**
 - **Comprehensive Binary Analysis**: File info, headers, strings, imports/exports, functions
-- **Security Vulnerability Assessment**: Protection mechanisms, dangerous functions, hardcoded secrets
 - **Automatic Function Decompilation**: Key functions decompiled using r2dec
 - **Executive Summary Generation**: Professional summary for stakeholders
 - **Radare2 Integration**: Stateful and stateless shell access
@@ -21,7 +20,6 @@ A professional binary reverse engineering and decompilation agent that provides 
 
 ### 📊 **Generated Reports**
 - `comprehensive_analysis.txt` - Complete binary overview
-- `security_analysis.txt` - Vulnerability assessment
 - `auto_decompiled_functions.txt` - Decompiled key functions
 - `executive_summary.txt` - Professional summary
 - `analysis_workflow_completed.txt` - Workflow completion status
@@ -38,10 +36,9 @@ A professional binary reverse engineering and decompilation agent that provides 
 ### Automatic Analysis Pipeline
 1. **File Upload** → Binary copied to session directory
 2. **Comprehensive Analysis** → File info, headers, strings, imports/exports
-3. **Security Assessment** → Vulnerability analysis, protection mechanisms
-4. **Function Decompilation** → Key functions automatically decompiled
-5. **Executive Summary** → Professional summary generated
-6. **Results Saved** → All reports available in workspace
+3. **Function Decompilation** → Key functions automatically decompiled
+4. **Executive Summary** → Professional summary generated
+5. **Results Saved** → All reports available in workspace
 
 ### Minimal User Intervention
 - No manual tool selection required
@@ -78,19 +75,19 @@ The system supports both `GEMINI_API_KEY` and `GOOGLE_API_KEY` environment varia
 
 ## Professional Use Cases
 
-- **Security Research**: Automated vulnerability assessment
-- **Malware Analysis**: Comprehensive threat analysis
-- **Software Auditing**: Code review and security evaluation
-- **Reverse Engineering**: Understanding binary behavior
-- **Compliance**: Security assessment for regulatory requirements
+- **Reverse Engineering**: Understanding binary behavior and structure
+- **Software Analysis**: Code review and functionality analysis
+- **Malware Analysis**: Understanding malicious binary behavior
+- **Software Auditing**: Code review and functionality evaluation
+- **Research**: Binary analysis for academic and research purposes
 
 ## Output Format
 
 All analysis results are provided in professional, chunked format:
 - **Executive Summary**: High-level findings and recommendations
 - **Technical Details**: Comprehensive technical analysis
-- **Security Assessment**: Vulnerability and protection analysis
 - **Function Analysis**: Decompiled code with explanations
+- **Binary Structure**: Architecture and section analysis
 - **Actionable Insights**: Professional recommendations
 
 The system is designed for professional use with minimal setup and maximum automation.

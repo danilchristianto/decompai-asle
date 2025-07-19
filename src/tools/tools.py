@@ -514,80 +514,7 @@ def auto_decompile_functions(
     except Exception as e:
         return ToolMessage(content=f"Error in auto decompilation: {str(e)}", tool_call_id=tool_call_id)
 
-@tool
-def generate_security_report(
-    state: Annotated[State, InjectedState],
-    tool_call_id: Annotated[str, InjectedToolCallId]
-) -> str:
-    """
-    Generates a comprehensive security analysis report including vulnerability assessment,
-    protection mechanisms, and potential attack vectors.
-    """
-    try:
-        writer = get_stream_writer()
-        writer("Generating security analysis report...\n")
-        
-        workspace_path = get_agent_workspace_path(state)
-        
-        security_checks = []
-        
-        # 1. Check for common vulnerabilities
-        writer("Checking for common vulnerabilities...\n")
-        vuln_check = r2_stateless_shell.invoke({
-            "commands": ["iS", "i~canary", "i~nx", "i~pic", "i~relro", "i~fortify"],
-            "state": state
-        })
-        security_checks.append(f"=== PROTECTION MECHANISMS ===\n{vuln_check}\n")
-        
-        # 2. Check for dangerous functions
-        writer("Analyzing dangerous function usage...\n")
-        dangerous_funcs = r2_stateless_shell.invoke({
-            "commands": ["axt @ sym.imp.strcpy", "axt @ sym.imp.sprintf", "axt @ sym.imp.gets", "axt @ sym.imp.system"],
-            "state": state
-        })
-        security_checks.append(f"=== DANGEROUS FUNCTIONS ===\n{dangerous_funcs}\n")
-        
-        # 3. Check for hardcoded secrets
-        writer("Searching for hardcoded secrets...\n")
-        secrets = kali_stateful_shell.invoke({
-            "commands": f"strings {state['binary_path']} | grep -i -E '(password|secret|key|token|api)' | head -20",
-            "state": state
-        })
-        security_checks.append(f"=== POTENTIAL HARDCODED SECRETS ===\n{secrets}\n")
-        
-        # 4. Check for suspicious strings
-        writer("Analyzing suspicious strings...\n")
-        suspicious = kali_stateful_shell.invoke({
-            "commands": f"strings {state['binary_path']} | grep -i -E '(http|ftp|ssh|telnet|cmd|shell)' | head -20",
-            "state": state
-        })
-        security_checks.append(f"=== SUSPICIOUS STRINGS ===\n{suspicious}\n")
-        
-        # 5. Check for anti-debugging techniques
-        writer("Checking for anti-debugging techniques...\n")
-        anti_debug = r2_stateless_shell.invoke({
-            "commands": ["axt @ sym.imp.ptrace", "axt @ sym.imp.getpid", "axt @ sym.imp.fork"],
-            "state": state
-        })
-        security_checks.append(f"=== ANTI-DEBUGGING CHECKS ===\n{anti_debug}\n")
-        
-        # Combine all security checks
-        full_security_report = "\n".join(security_checks)
-        
-        # Save report
-        security_path = os.path.join(workspace_path, "security_analysis.txt")
-        with open(security_path, 'w') as f:
-            f.write(full_security_report)
-        
-        # Return chunked report
-        chunks = chunk_text(full_security_report, 6000)
-        if len(chunks) == 1:
-            return ToolMessage(content=f"Security Analysis Report:\n\n{chunks[0]}\n\nReport saved to: {security_path}", tool_call_id=tool_call_id)
-        else:
-            return ToolMessage(content=f"Security Analysis Report (Part 1 of {len(chunks)}):\n\n{chunks[0]}\n\nReport saved to: {security_path}", tool_call_id=tool_call_id)
-            
-    except Exception as e:
-        return ToolMessage(content=f"Error in security analysis: {str(e)}", tool_call_id=tool_call_id)
+
 
 @tool
 def generate_executive_summary(
@@ -642,7 +569,6 @@ SAMPLE STRINGS:
 
 ANALYSIS COMPLETED:
 - Comprehensive binary analysis performed
-- Security assessment completed
 - Function decompilation attempted
 - All reports saved to workspace directory
 
@@ -650,7 +576,7 @@ NEXT STEPS:
 - Review generated reports in workspace
 - Analyze specific functions of interest
 - Perform dynamic analysis if needed
-- Consider additional tools for deeper analysis
+- Consider additional tools for deeper reverse engineering
 """
         
         # Save summary
@@ -687,18 +613,7 @@ def continue_comprehensive_analysis(
         # Continue with remaining analysis steps
         analysis_steps = []
         
-        # 1. Security Analysis
-        writer("Running security analysis...\n")
-        try:
-            security_result = generate_security_report.invoke({
-                "state": state,
-                "tool_call_id": tool_call_id
-            })
-            analysis_steps.append(f"=== SECURITY ANALYSIS COMPLETED ===\n{security_result.content}\n")
-        except Exception as e:
-            analysis_steps.append(f"=== SECURITY ANALYSIS FAILED ===\nError: {str(e)}\n")
-        
-        # 2. Function Decompilation
+        # 1. Function Decompilation
         writer("Running automatic function decompilation...\n")
         try:
             decomp_result = auto_decompile_functions.invoke({
@@ -709,7 +624,7 @@ def continue_comprehensive_analysis(
         except Exception as e:
             analysis_steps.append(f"=== FUNCTION DECOMPILATION FAILED ===\nError: {str(e)}\n")
         
-        # 3. Executive Summary
+        # 2. Executive Summary
         writer("Generating executive summary...\n")
         try:
             summary_result = generate_executive_summary.invoke({
@@ -721,22 +636,20 @@ def continue_comprehensive_analysis(
             analysis_steps.append(f"=== EXECUTIVE SUMMARY FAILED ===\nError: {str(e)}\n")
         
         # Create workflow completion report
-        completion_report = f"""=== COMPREHENSIVE ANALYSIS WORKFLOW COMPLETED ===
+        completion_report = f"""=== COMPREHENSIVE REVERSE ENGINEERING WORKFLOW COMPLETED ===
 
 All analysis steps have been completed successfully:
 
 1. ✅ Initial comprehensive binary analysis
-2. ✅ Security vulnerability assessment  
-3. ✅ Automatic function decompilation
-4. ✅ Executive summary generation
+2. ✅ Automatic function decompilation
+3. ✅ Executive summary generation
 
 All reports have been saved to the workspace directory:
 - comprehensive_analysis.txt
-- security_analysis.txt  
 - auto_decompiled_functions.txt
 - executive_summary.txt
 
-The binary has been thoroughly analyzed with professional-grade tools and reports.
+The binary has been thoroughly analyzed with professional-grade reverse engineering tools and reports.
 """
         
         # Save completion report
