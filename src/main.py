@@ -67,7 +67,7 @@ rate_limiter = InMemoryRateLimiter(
 openai_base_url = None
 api_key = os.getenv("OPENAI_API_KEY")
 if "gemini" in model_name:
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     openai_base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
     content_null_value = " "
     if "2.5" in model_name:
