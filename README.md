@@ -1,174 +1,96 @@
-# DecompAI: Binary Analysis and Decompilation Agent
+# DecompAI - Binary Analysis and Decompilation Agent
 
-DecompAI is a Gradio-based LLM agent that automates binary analysis and decompilation workflows. Whether you’re a newcomer to reverse engineering or an experienced practitioner, DecompAI helps you explore, debug, and decompile x86 Linux binaries in a conversational interface.
-
----
-
-## Table of Contents
-
-- [DecompAI: Binary Analysis and Decompilation Agent](#decompai-binary-analysis-and-decompilation-agent)
-  - [Table of Contents](#table-of-contents)
-  - [Features](#features)
-  - [Setup \& Configuration](#setup--configuration)
-  - [Docker \& First-Run Build](#docker--first-run-build)
-  - [Running the Application](#running-the-application)
-  - [Usage Overview](#usage-overview)
-    - [1. Upload a Binary](#1-upload-a-binary)
-    - [2. Automatic Analysis](#2-automatic-analysis)
-    - [3. Interactive Chat](#3-interactive-chat)
-  - [Filesystem \& Sessions](#filesystem--sessions)
-  - [Supported Binaries \& Future Plans](#supported-binaries--future-plans)
-  - [Testing \& Benchmarks](#testing--benchmarks)
-  - [Contributing](#contributing)
-  - [Authors](#authors)
-  - [Ethics \& Legal](#ethics--legal)
-
----
+A professional binary reverse engineering and decompilation agent that provides comprehensive analysis with minimal user intervention.
 
 ## Features
 
-- **AI-Driven Decompilation**: Step-by-step decompilation assistance via a ReAct-style agent.
-- **Binary Analysis**: List functions, disassemble sections, summarize assembly.
-- **Tool Integration**: Leverage `objdump`, `gdb`, Ghidra (with custom AI hooks), and dozens of Kali-provided tools.
-- **Interactive Chat**: Ask the agent questions, request specific tool runs, or direct decompilation actions.
-- **Session Persistence**: Uploading the same binary restores your previous workspace.
-- **Frameworks**: Built on LangGraph, LangChain and Gradio.
+### 🚀 **Automatic Comprehensive Analysis**
+- **Zero User Intervention**: Upload a binary and get professional results automatically
+- **Complete Workflow**: File analysis → Security assessment → Function decompilation → Executive summary
+- **Chunked Output**: Large reports are automatically split to avoid context length issues
+- **Professional Reports**: All analysis saved to workspace for easy review
 
----
+### 🛠️ **Analysis Tools**
+- **Comprehensive Binary Analysis**: File info, headers, strings, imports/exports, functions
+- **Security Vulnerability Assessment**: Protection mechanisms, dangerous functions, hardcoded secrets
+- **Automatic Function Decompilation**: Key functions decompiled using r2dec
+- **Executive Summary Generation**: Professional summary for stakeholders
+- **Radare2 Integration**: Stateful and stateless shell access
+- **Ghidra Integration**: Post-analysis scripts and function decompilation
+- **Kali Linux Environment**: Sandboxed shell for general tools
 
-## Setup & Configuration
+### 📊 **Generated Reports**
+- `comprehensive_analysis.txt` - Complete binary overview
+- `security_analysis.txt` - Vulnerability assessment
+- `auto_decompiled_functions.txt` - Decompiled key functions
+- `executive_summary.txt` - Professional summary
+- `analysis_workflow_completed.txt` - Workflow completion status
 
-1. **Clone & Dependencies**
+## Quick Start
+
+1. **Upload Binary**: Simply upload any binary file through the interface
+2. **Automatic Analysis**: The system automatically runs comprehensive analysis
+3. **Review Results**: All reports are saved to the workspace directory
+4. **Professional Output**: Get actionable insights and security recommendations
+
+## Workflow
+
+### Automatic Analysis Pipeline
+1. **File Upload** → Binary copied to session directory
+2. **Comprehensive Analysis** → File info, headers, strings, imports/exports
+3. **Security Assessment** → Vulnerability analysis, protection mechanisms
+4. **Function Decompilation** → Key functions automatically decompiled
+5. **Executive Summary** → Professional summary generated
+6. **Results Saved** → All reports available in workspace
+
+### Minimal User Intervention
+- No manual tool selection required
+- No step-by-step prompting
+- Professional-grade analysis automatically performed
+- Results chunked to avoid large text issues
+- All files saved for easy access
+
+## Environment Setup
 
 ```bash
-git clone https://github.com/louisgthier/decompai.git
-cd decompai
+# Install dependencies
 pip install -r requirements.txt
-```
 
-2. **Environment Variables**  
-   Create a `.env` file in the project root with your API keys and model choice:
+# Set up environment variables
+export GEMINI_API_KEY=your_api_key_here
+export LLM_MODEL=gemini-1.5-flash
 
-```dotenv
-OPENAI_API_KEY=sk-proj-ABC...
-GEMINI_API_KEY=ya29.A0AR...
-LLM_MODEL=gemini-2.0-flash      # or gemini-2.5-flash-preview-04-17
-```
-
-Other OpenAI or Gemini models work too, and providers using the OpenAI client can be used with minor code tweaks.
-
-3. **Docker**  
-   Ensure Docker is installed and running; DecompAI uses a privileged Kali-based container to expose many binary analysis tools.
-
----
-
-## Docker & First-Run Build
-
-- **Automatic Build Trigger**  
-  On your first binary upload, the Docker image build will start automatically.
-- **Long Build Time**  
-  Building can take **15+ minutes**. We plan to publish prebuilt images to a container registry; contributions to automate this in CI/CD are welcome.
-- **Privileged Container**  
-  The container runs in privileged mode to allow low-level tool execution—please audit code and run in a secure environment.
-
----
-
-## Running the Application
-
-- **Standard**
-
-```bash
+# Run the application
 python run.py
 ```
 
-- **Hot Reload (Gradio CLI)**
+## API Key Configuration
 
-```bash
-gradio run.py
-```
+The system supports both `GEMINI_API_KEY` and `GOOGLE_API_KEY` environment variables for flexibility.
 
-- **Access**  
-  Open your browser to:
+## Architecture
 
-```bash
-http://localhost:7860
-```
+- **LangGraph**: Workflow orchestration
+- **Gradio**: Web interface
+- **Radare2**: Binary analysis and decompilation
+- **Ghidra**: Advanced decompilation
+- **Kali Linux**: Sandboxed analysis environment
 
----
+## Professional Use Cases
 
-## Usage Overview
+- **Security Research**: Automated vulnerability assessment
+- **Malware Analysis**: Comprehensive threat analysis
+- **Software Auditing**: Code review and security evaluation
+- **Reverse Engineering**: Understanding binary behavior
+- **Compliance**: Security assessment for regulatory requirements
 
-### 1. Upload a Binary
+## Output Format
 
-Drag & drop or click to select your executable file. The agent will initialize a session based on the file’s hash to ensure persistent workspaces across uploads.
+All analysis results are provided in professional, chunked format:
+- **Executive Summary**: High-level findings and recommendations
+- **Technical Details**: Comprehensive technical analysis
+- **Security Assessment**: Vulnerability and protection analysis
+- **Function Analysis**: Decompiled code with explanations
+- **Actionable Insights**: Professional recommendations
 
-### 2. Automatic Analysis
-
-Depending on the binary’s size, the agent will begin by disassembling or summarizing the file. Tool-specific setups and session environment are launched in the background.
-
-### 3. Interactive Chat
-
-Start a conversation with the agent to:
-
-- Understand what the binary does.
-- Decompile functions step by step.
-- Explore potential vulnerabilities or attack surfaces.
-- Request disassembly or function listings.
-- Use integrated tools like `gdb`, `ghidra`, or `objdump` explicitly by asking the agent to do so.
-- Combine stateful and stateless shell interactions to inspect the binary from different angles.
-
-Whether you're a beginner curious about how compiled code works, or a reverse engineer accelerating your workflow, the agent is designed to adapt to your requests naturally.
-
-![Interface Screenshot](assets/interface.png)
-
----
-
-## Filesystem & Sessions
-
-- **Workspace Storage**  
-  Sessions are stored under the path configured by `ANALYSIS_SESSIONS_ROOT` in `config.py`.
-- **Session Keys**  
-  Workspaces are keyed by the SHA-256 hash of the binary; re-uploading restores your previous work.
-- **Persistence Warning**  
-  Data in `/tmp` (or your custom `ANALYSIS_SESSIONS_ROOT`) is ephemeral and cleared on reboot.
-
----
-
-## Supported Binaries & Future Plans
-
-- **Current Support**:
-- x86 Linux ELF binaries only.
-- **Roadmap**:
-- QEMU-backed multiplatform support (ARM, MIPS, Windows PE, etc.).
-- UI-based workspace export/download.
-
----
-
-## Testing & Benchmarks
-
-Validated on CTF challenges (e.g., [Root-Me](https://www.root-me.org/)), consistently solving **3/5 difficulty** exercises in an automated or semi-automated fashion.
-
----
-
-## Contributing
-
-We welcome pull requests!
-
-- **New Tools**: Add scripts or wrappers in `src/tools/`.
-- **CI/CD**: Help automate Docker builds and registry publishing.
-- **Bugfixes & Enhancements**: Fork, commit against `main`, and open a PR.
-
----
-
-## Authors
-
-- **Louis Gauthier** - [@louisgthier](https://github.com/louisgthier)
-- **Clément Florval** - [@ClementFrvl](https://github.com/ClementFrvl)
-
-Project developed as part of a school research initiative. Check out other projects at [Digiwave](https://dgwave.net/portfolio).
-
----
-
-## Ethics & Legal
-
-> **Disclaimer:** DecompAI is intended **only** for lawful reverse engineering, educational use, and security research. The authors **do not** assume liability for misuse. Always comply with software licenses and local laws.
+The system is designed for professional use with minimal setup and maximum automation.

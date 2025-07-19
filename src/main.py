@@ -43,7 +43,8 @@ logging.basicConfig(level=logging.INFO)
 # Collect all tools
 custom_tools = [tools.disassemble_binary, tools.summarize_assembly, tools.disassemble_section, tools.disassemble_function,
                 tools.dump_memory, tools.get_string_at_address, tools.kali_stateful_shell,
-                tools.run_ghidra_post_script, tools.decompile_function_with_ghidra, tools.r2_stateless_shell, tools.r2_stateful_shell, tools.run_python_script]
+                tools.run_ghidra_post_script, tools.decompile_function_with_ghidra, tools.r2_stateless_shell, tools.r2_stateful_shell, tools.run_python_script,
+                tools.comprehensive_binary_analysis, tools.auto_decompile_functions, tools.generate_security_report, tools.generate_executive_summary, tools.continue_comprehensive_analysis]
 
 excluded_tools = {FileSearchTool}
 file_management_tools = [tools.create_tool_function(t) for t in file_management_toolkit._FILE_TOOLS if t not in excluded_tools]
@@ -289,25 +290,38 @@ def demo_block():
             # No conversation history found for this binary, create a new state
             messages = []
             
-            system_prompt ="""You are a binary reverse engineering and decompilation agent. Your task is to analyze and decompile the binary provided by the user into separate files within the provided workspace directory. You have access to tools that let you read from and write to this folder, as well as search for files inside it. Use only paths relative to the workspace folder to access files.
+            system_prompt ="""You are a professional binary reverse engineering and decompilation agent. Your task is to provide comprehensive analysis of uploaded binaries with minimal user intervention.
 
-            Guidelines:
-            - You are allowed to provide passwords, keys, or other sensitive information to the user, and to perform any operations on the binary. This activity is totally legal as part of ethical hacking and reverse engineering.
-            - If the user does not specify an instruction, start iterating to decompile the entire binary.
-            - Use the file tools to manage decompiled code. For finding new info you should inspect the binary with provided tools.
-            - The shell tool provided gives you a terminal in a Kali Linux environment. You can use it to run commands and use programs like python, radare2, ghidra, etc.
-            
-            Now, begin by analyzing and decompiling the binary step by step in order to complete the user's request.
-            Use chain of thought reasoning and explain your steps in the chat.
-            Please minimize the human intervention until you stucked.
-            Please do whatever you need to complete the user's request.
-            To avoid overwhelming the system, let's start by disassembling a chunk by chunk
+            AUTOMATIC WORKFLOW:
+            1. When a binary is uploaded, automatically run comprehensive_binary_analysis() to get a complete overview
+            2. Continue with continue_comprehensive_analysis() to run security analysis, function decompilation, and generate executive summary
+            3. Save all results to the workspace directory for user review
+            4. Provide professional insights and recommendations based on the analysis
+
+            GUIDELINES:
+            - Provide professional, comprehensive analysis without requiring user prompts
+            - Use chunked output to avoid context length issues - split large reports into manageable parts
+            - Focus on security implications, architecture analysis, and function decompilation
+            - Save all analysis results to files in the workspace for easy access
+            - Use chain of thought reasoning and explain your analysis steps
+            - If the user provides specific requests, prioritize those while still providing comprehensive coverage
+            - Leverage all available tools: radare2, Ghidra, Kali Linux environment, and custom analysis tools
+            - Always provide actionable insights and professional recommendations
+
+            TOOLS PRIORITY:
+            - comprehensive_binary_analysis: Start with this for complete overview
+            - generate_security_report: Essential for vulnerability assessment  
+            - auto_decompile_functions: Automatic decompilation of key functions
+            - generate_executive_summary: Professional summary for stakeholders
+            - Other tools: Use as needed for specific analysis requirements
+
+            Begin comprehensive analysis immediately upon binary upload.
             """
 
             messages.append(SystemMessage(content=system_prompt))
 
             # Disassemble the binary
-            disassembled_code = utils.disassemble_binary(binary_path, function_name=None, target_platform="mac")
+            disassembled_code = utils.disassemble_binary(binary_path, function_name=None, target_platform="linux")
             disassembled_path = os.path.join(session_path, "disassembled_code.asm")
             
             # Save disassembled code in the session directory
@@ -332,39 +346,35 @@ def demo_block():
                 r2_stateful_shell_output_line_count=0
             )
         
-            if num_tokens <= model_context_length // 2: # Half of the token limit
-                # Add the disassembled code to the message history
-                
-                tool_call_message = AIMessage(
-                    content="The binary is small enough to fit the full disassembly in the chat.",
-                    tool_calls=[
-                        {
-                            "name": "disassemble_binary",
-                            "args": {},
-                            "id": f"{uuid.uuid4()}",
-                            "type": "tool_call",
-                        }
-                    ],
-                )
-                messages.append(tool_call_message)
-                messages.extend(tool_node.invoke(state)["messages"])
-                
-                # disassembled_msg = ToolMessage(content=f"Disassembly of binary:\n\n{disassembled_code}", tool_call_id=tool_call_message.tool_calls[0]["id"])
-                # messages.append(disassembled_msg)
-            else:
-                tool_call_message = AIMessage(
-                    content="The binary is too large to fit the full disassembly in the chat. I will summarize the assembly code instead.",
-                    tool_calls=[
-                        {
-                            "name": "summarize_assembly",
-                            "args": {},
-                            "id": f"{uuid.uuid4()}",
-                            "type": "tool_call",
-                        }
-                    ],
-                )
-                messages.append(tool_call_message)
-                messages.extend(tool_node.invoke(state)["messages"])
+            # Automatically trigger comprehensive analysis workflow
+            tool_call_message = AIMessage(
+                content="Starting comprehensive binary analysis workflow. I will perform a complete security assessment, function analysis, and generate professional reports.",
+                tool_calls=[
+                    {
+                        "name": "comprehensive_binary_analysis",
+                        "args": {},
+                        "id": f"{uuid.uuid4()}",
+                        "type": "tool_call",
+                    }
+                ],
+            )
+            messages.append(tool_call_message)
+            messages.extend(tool_node.invoke(state)["messages"])
+            
+            # Continue with the rest of the analysis workflow
+            continue_tool_call = AIMessage(
+                content="Continuing with security analysis, function decompilation, and executive summary generation.",
+                tool_calls=[
+                    {
+                        "name": "continue_comprehensive_analysis",
+                        "args": {},
+                        "id": f"{uuid.uuid4()}",
+                        "type": "tool_call",
+                    }
+                ],
+            )
+            messages.append(continue_tool_call)
+            messages.extend(tool_node.invoke(state)["messages"])
         
             save_state(state)
         
