@@ -297,7 +297,11 @@ def demo_block():
             - Use the file tools to manage decompiled code. For finding new info you should inspect the binary with provided tools.
             - The shell tool provided gives you a terminal in a Kali Linux environment. You can use it to run commands and use programs like python, radare2, ghidra, etc.
             
-            Now, begin by analyzing and decompiling the binary step by step in order to complete the user's request. Use chain of thought reasoning and explain your steps in the chat.
+            Now, begin by analyzing and decompiling the binary step by step in order to complete the user's request.
+            Use chain of thought reasoning and explain your steps in the chat.
+            Please minimize the human intervention until you stucked.
+            Please do whatever you need to complete the user's request.
+            To avoid overwhelming the system, let's start by disassembling a chunk by chunk
             """
 
             messages.append(SystemMessage(content=system_prompt))
